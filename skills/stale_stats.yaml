@@ -1,0 +1,29 @@
+name: stale_statistics
+description: >
+  The planner's row estimate for a node is wildly different from the
+  actual row count (order-of-magnitude off). This almost always means
+  table statistics are stale (ANALYZE hasn't run recently, or default
+  stats target is too low for a skewed column), causing the planner to
+  pick a suboptimal join strategy or scan type.
+
+detects:
+  min_row_estimate_error_ratio: 10.0
+
+severity: medium
+
+explanation: >
+  The optimizer estimated a very different row count than what actually
+  came back at execution time. When estimates are this far off, the
+  planner is effectively guessing blind — it may choose a nested loop
+  join expecting few rows and get hit with a much larger actual volume,
+  or vice versa with a hash join that then spills to disk.
+
+fix_template: >
+  Refresh statistics for "{table}":
+    ANALYZE {table};
+  If the skew is on a specific column (e.g. a status column with very
+  uneven value distribution), consider raising its statistics target:
+    ALTER TABLE {table} ALTER COLUMN <column> SET STATISTICS 500;
+    ANALYZE {table};
+  If this table changes rapidly, also check that autovacuum is keeping
+  up (pg_stat_user_tables.last_autoanalyze).

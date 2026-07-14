@@ -1,0 +1,37 @@
+name: implicit_type_conversion
+description: >
+  A function is applied to a column inside the filter/index condition
+  (LOWER, UPPER, TO_CHAR, CAST, ::text, etc). This silently disables use
+  of a plain B-tree index on that column, even if one exists.
+
+detects:
+  node_type: "Seq Scan"
+  # Only match an actual function call wrapping the column (LOWER(...),
+  # UPPER(...), TO_CHAR(...), CAST(...)) — this reliably prevents index
+  # usage. We deliberately do NOT try to detect bare "::type" casts:
+  # PostgreSQL's EXPLAIN output routinely adds explicit casts for normal,
+  # index-friendly comparisons (e.g. a `character varying` column
+  # compared to a text literal becomes `(col)::text = 'x'::text` in the
+  # plan, with zero performance impact). Trying to distinguish a harmless
+  # cast from a harmful one using only the printed filter text proved
+  # unreliable in testing against a real database — false positives were
+  # more common than true positives, so the safer choice is to only flag
+  # the unambiguous function-call case.
+  condition_pattern: "\\b(lower|upper|to_char|to_number|cast)\\s*\\("
+
+severity: high
+
+explanation: >
+  The WHERE clause wraps an indexed-looking column in a function or type
+  cast. PostgreSQL cannot use a standard index in this situation because
+  the indexed values and the transformed comparison value are not
+  directly comparable — the planner falls back to a full scan.
+
+fix_template: >
+  Two options for "{table}":
+  1) Create a functional index that matches the transformation, e.g.:
+     CREATE INDEX CONCURRENTLY idx_{table}_lower_col ON {table} (LOWER(<column>));
+  2) Or rewrite the query to avoid transforming the column at all,
+     e.g. compare against a pre-transformed literal instead of wrapping
+     the column: prefer `col = 'ABC'` over `UPPER(col) = 'ABC'` when the
+     stored data is already normalized.

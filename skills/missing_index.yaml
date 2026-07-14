@@ -1,0 +1,33 @@
+name: missing_index
+description: >
+  A sequential scan is filtering a large table by a condition that could
+  be served by an index instead. This is the single most common cause of
+  slow OLTP-style queries.
+
+detects:
+  node_type: "Seq Scan"
+  requires_no_index: true
+  min_actual_rows: 1000
+  # Only flag when the filter is actually selective. If a query returns
+  # a large fraction of the table (e.g. > 25%), a sequential scan is
+  # often the CORRECT plan — an index lookup would mean random I/O for
+  # most of the table anyway, which is slower than one sequential read.
+  # Found via real testing: a 60%-selectivity filter on a 200k-row table
+  # kept getting flagged even after adding the suggested index, because
+  # the planner correctly refused to use it.
+  max_selectivity_ratio: 0.25
+
+severity: high
+
+explanation: >
+  The planner performed a full sequential scan over a table with a
+  filter condition, and no index was used. On a table this size, a
+  targeted index would let PostgreSQL jump directly to matching rows
+  instead of reading every row.
+
+fix_template: >
+  Consider adding an index on the column(s) used in the WHERE clause of
+  the "{table}" scan, e.g.:
+    CREATE INDEX CONCURRENTLY idx_{table}_filter ON {table} (<filter_column>);
+  Verify with EXPLAIN ANALYZE afterwards that the planner switches to an
+  Index Scan / Bitmap Index Scan.
