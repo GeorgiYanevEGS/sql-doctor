@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import typer
 
@@ -177,6 +178,32 @@ def list_skills():
     loaded = load_skills()
     for s in loaded.skills:
         typer.echo(f"- {s.name} [{s.severity}]: {s.description.strip()}")
+
+
+@app.command()
+def ledger_status(
+    ledger_path: str = typer.Option(
+        None,
+        help="Path to coverage ledger JSON. Defaults to the committed ledger.",
+    ),
+):
+    """
+    Report whether the coverage ledger loaded successfully.
+
+    Output: LEDGER_STATUS=OK | MISSING | CORRUPT
+    Exit code: 0=OK, 1=MISSING, 2=CORRUPT
+
+    Designed for CI smoke checks — exit code alone is sufficient; no text
+    parsing required.
+    """
+    path = Path(ledger_path) if ledger_path else DEFAULT_LEDGER_PATH
+    loaded = load_skills(ledger_path=path)
+    status = loaded.ledger_status
+    typer.echo(f"LEDGER_STATUS={status.value.upper()}")
+    if status == LedgerStatus.MISSING:
+        raise typer.Exit(1)
+    if status == LedgerStatus.CORRUPT:
+        raise typer.Exit(2)
 
 
 if __name__ == "__main__":

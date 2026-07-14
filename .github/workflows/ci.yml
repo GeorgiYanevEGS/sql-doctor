@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests (serial — do not add -n auto; see tests/conftest.py)
+        run: pytest tests/ -v
+
+  ledger-integrity:
+    name: Coverage ledger integrity
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Regenerate coverage ledger from negative tests
+        run: pytest tests/test_coverage_ledger.py -v
+
+      - name: Assert ledger matches committed state
+        run: |
+          git diff --exit-code tests/coverage_ledger.json || {
+            echo ""
+            echo "Coverage ledger drifted from committed state."
+            echo "A skill's covers_node_types or a negative test changed"
+            echo "without the ledger being updated and committed."
+            echo ""
+            echo "To fix:"
+            echo "  pytest tests/test_coverage_ledger.py"
+            echo "  git add tests/coverage_ledger.json && git commit"
+            exit 1
+          }
