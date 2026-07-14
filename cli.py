@@ -19,7 +19,7 @@ import typer
 from core.explain_parser import parse_explain_json
 from core.llm_provider import LLMError, get_provider
 from core.schema_introspect import get_table_row_counts, introspect_query_tables
-from core.skill_matcher import load_skills, match_skills
+from core.skill_matcher import CoverageStatus, DEFAULT_LEDGER_PATH, load_skills, match_skills
 from core.validator import build_grounded_prompt, validate_llm_suggestion
 
 app = typer.Typer(add_completion=False)
@@ -68,7 +68,7 @@ def analyze(
     typer.echo(plan.summary())
 
     typer.echo("\n--- Running deterministic skill checks (no LLM) ---")
-    skills = load_skills()
+    skills = load_skills(ledger_path=DEFAULT_LEDGER_PATH)
     table_row_counts = get_table_row_counts(conn, plan.tables_referenced())
     diagnosis = match_skills(plan, skills, table_row_counts)
 
@@ -80,7 +80,6 @@ def analyze(
         conn.close()
         return
 
-    from core.skill_matcher import CoverageStatus
     coverage = diagnosis.node_type_coverage
     if all(s == CoverageStatus.SKILL_CLEARED for s in coverage.values()):
         typer.echo("No issues found — all node types examined and cleared by skill checks.")

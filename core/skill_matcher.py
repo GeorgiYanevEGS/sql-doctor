@@ -19,6 +19,7 @@ import yaml
 from core.explain_parser import ParsedPlan, PlanNode
 
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+DEFAULT_LEDGER_PATH = Path(__file__).resolve().parent.parent / "tests" / "coverage_ledger.json"
 
 
 class CoverageStatus(Enum):
