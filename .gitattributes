@@ -1,0 +1,7 @@
+# Normalise line endings in the coverage ledger so git diff --exit-code
+# in CI produces a clean result regardless of contributor core.autocrlf
+# settings. Without this, a contributor with autocrlf=false on Windows
+# can commit CRLF line endings; the CI runner rewrites the file as LF;
+# the diff step reports spurious drift indistinguishable from real content
+# changes.
+*.json text eol=lf

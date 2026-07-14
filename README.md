@@ -103,7 +103,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 26 tests
+python -m pytest tests/ -v         # runs all 37 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -125,7 +125,7 @@ grounded fallback path when no skill matches.
 
 What's implemented: parser, 4 skills (with selectivity- and
 loop-awareness), provider abstraction (3 backends), schema
-introspection, validator, coverage ledger, CLI wiring, 26 tests:
+introspection, validator, coverage ledger, CLI wiring, 37 tests:
 
 - **13 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
@@ -135,14 +135,20 @@ introspection, validator, coverage ledger, CLI wiring, 26 tests:
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
   (canonical ordering, VacuousTestError, assertion on skill firing).
+- **7 coverage-completeness tests** — assert every (skill, node type)
+  pair declared in `covers_node_types` has a corresponding ledger entry;
+  closes the gap that regenerate-and-diff cannot catch.
+- **3 CLI tests** — verify `ledger-status` exit codes and output for
+  OK, MISSING, and CORRUPT ledger states.
 - **1 integration test** — loads the real committed ledger and confirms
   it authorizes the current skill set without errors.
+- **1 README meta-test** — asserts this test count matches `pytest
+  --collect-only`; prevents the count from silently drifting again.
 
 Historical validation happened against a real database and is captured in
-fixed regression tests. Continuous enforcement of the coverage guarantee
-on every future change is designed but not yet built: the CI pipeline
-does not yet include a regenerate-and-diff step (`git diff --exit-code
-tests/coverage_ledger.json` after re-running the negative tests) to
+fixed regression tests. CI runs on every push and pull request to main:
+the `test` job runs all 37 tests, and the `ledger-integrity` job
+regenerates the coverage ledger and diffs against the committed state to
 catch a stale ledger before merge.
 
 What's next (not yet done):

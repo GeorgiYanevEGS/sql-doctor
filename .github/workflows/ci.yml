@@ -11,14 +11,22 @@ jobs:
     name: Test suite
     runs-on: ubuntu-latest
     steps:
+      # NOTE: actions/checkout and actions/setup-python are pinned to major
+      # versions, not SHAs. SHA-pin both before adding secrets or enabling
+      # fork PR triggers — at that point a compromised action version can
+      # exfiltrate whatever the workflow has access to.
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run tests (serial — do not add -n auto; see tests/conftest.py)
         run: pytest tests/ -v
@@ -32,10 +40,14 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Regenerate coverage ledger from negative tests
         run: pytest tests/test_coverage_ledger.py -v
