@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.skill_matcher import load_skills
 from tests.coverage_helpers import assert_no_match
 
-SKILLS = load_skills()
+SKILLS = load_skills().skills
 
 
 # ---------------------------------------------------------------------------

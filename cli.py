@@ -19,7 +19,7 @@ import typer
 from core.explain_parser import parse_explain_json
 from core.llm_provider import LLMError, get_provider
 from core.schema_introspect import get_table_row_counts, introspect_query_tables
-from core.skill_matcher import CoverageStatus, DEFAULT_LEDGER_PATH, load_skills, match_skills
+from core.skill_matcher import CoverageStatus, DEFAULT_LEDGER_PATH, LedgerStatus, load_skills, match_skills
 from core.validator import build_grounded_prompt, validate_llm_suggestion
 
 app = typer.Typer(add_completion=False)
@@ -68,9 +68,9 @@ def analyze(
     typer.echo(plan.summary())
 
     typer.echo("\n--- Running deterministic skill checks (no LLM) ---")
-    skills = load_skills(ledger_path=DEFAULT_LEDGER_PATH)
+    loaded = load_skills(ledger_path=DEFAULT_LEDGER_PATH)
     table_row_counts = get_table_row_counts(conn, plan.tables_referenced())
-    diagnosis = match_skills(plan, skills, table_row_counts)
+    diagnosis = match_skills(plan, loaded.skills, table_row_counts, ledger_status=loaded.ledger_status)
 
     if diagnosis.matches:
         for m in diagnosis.matches:
@@ -81,7 +81,17 @@ def analyze(
         return
 
     coverage = diagnosis.node_type_coverage
-    if all(s == CoverageStatus.SKILL_CLEARED for s in coverage.values()):
+    if diagnosis.ledger_load_error:
+        # Dev-mode: ledger missing → nudge to regenerate.
+        # Frozen-binary: ledger corrupt/missing → this build is defective.
+        severity = "MISSING" if diagnosis.ledger_status == LedgerStatus.MISSING else "CORRUPT"
+        typer.secho(
+            f"No skill flagged this query, but the coverage ledger failed to load "
+            f"({severity}) — this result is UNVERIFIED, not confirmed clean. "
+            f"Run the test suite to regenerate the ledger, or reinstall if using a packaged binary.",
+            fg=typer.colors.RED,
+        )
+    elif all(s == CoverageStatus.SKILL_CLEARED for s in coverage.values()):
         typer.echo("No issues found — all node types examined and cleared by skill checks.")
     elif any(s in (CoverageStatus.NO_APPLICABLE_SKILL, CoverageStatus.UNVERIFIED) for s in coverage.values()):
         uncovered = [nt for nt, s in coverage.items() if s != CoverageStatus.SKILL_CLEARED]

@@ -9,6 +9,8 @@ banking ETL bugs, encoded as data" layer described to the user.
 
 from __future__ import annotations
 
+import importlib.resources
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,7 +21,16 @@ import yaml
 from core.explain_parser import ParsedPlan, PlanNode
 
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
-DEFAULT_LEDGER_PATH = Path(__file__).resolve().parent.parent / "tests" / "coverage_ledger.json"
+
+# Locate the ledger via the package system rather than a raw __file__ path.
+# TODO (future session): promote coverage_ledger.json from tests/ into
+# core/data/ and change this reference to:
+#   importlib.resources.files("core").joinpath("data/coverage_ledger.json")
+# That path is bundled automatically by PyInstaller via package-data datas
+# and resolves correctly in both source and frozen-binary contexts.
+DEFAULT_LEDGER_PATH = (
+    Path(str(importlib.resources.files("core"))).parent / "tests" / "coverage_ledger.json"
+)
 
 
 class CoverageStatus(Enum):
@@ -28,10 +39,27 @@ class CoverageStatus(Enum):
     UNVERIFIED = "unverified"
 
 
+class LedgerStatus(Enum):
+    OK = "ok"
+    MISSING = "missing"
+    CORRUPT = "corrupt"
+
+
+@dataclass
+class LoadedSkills:
+    skills: list["Skill"]
+    ledger_status: LedgerStatus
+
+
 @dataclass
 class DiagnosisResult:
     matches: list["SkillMatch"]
     node_type_coverage: dict[str, CoverageStatus]
+    ledger_status: LedgerStatus = field(default_factory=lambda: LedgerStatus.OK)
+
+    @property
+    def ledger_load_error(self) -> bool:
+        return self.ledger_status != LedgerStatus.OK
 
 
 @dataclass
@@ -137,7 +165,7 @@ class Skill:
 def load_skills(
     skills_dir: Path | str = DEFAULT_SKILLS_DIR,
     ledger_path: Path | None = None,
-) -> list[Skill]:
+) -> LoadedSkills:
     skills_dir = Path(skills_dir)
     skills = []
     for path in sorted(skills_dir.glob("*.yaml")):
@@ -147,40 +175,39 @@ def load_skills(
             print(f"[sql-doctor] Warning: failed to load skill {path.name}: {exc}")
 
     if ledger_path is not None:
-        _apply_ledger(skills, Path(ledger_path))
+        ledger_status = _apply_ledger(skills, Path(ledger_path))
+    else:
+        ledger_status = LedgerStatus.OK
 
-    return skills
+    return LoadedSkills(skills=skills, ledger_status=ledger_status)
 
 
-def _apply_ledger(skills: list[Skill], ledger_path: Path) -> None:
+def _apply_ledger(skills: list[Skill], ledger_path: Path) -> LedgerStatus:
     """
     Cross-check each skill's covers_node_types against the ledger.
     A (skill_name, node_type) pair not in the ledger is marked unverified —
     the skill can still fire positive matches but won't contribute to SKILL_CLEARED.
-    Fails open if the ledger is missing or corrupt: all coverage downgrades to unverified.
+    Fails open if the ledger is missing or corrupt: all coverage downgrades to
+    unverified, and the returned LedgerStatus tells the caller which failure occurred.
     """
-    try:
-        import json
-        entries = json.loads(ledger_path.read_text(encoding="utf-8"))
-        verified_pairs: set[tuple[str, str]] = {
-            (e["skill_name"], e["node_type"]) for e in entries
-        }
-        missing = False
-    except Exception:  # noqa: BLE001
-        verified_pairs = set()
-        missing = True
-        print(
-            "[sql-doctor] coverage ledger missing or corrupt — "
-            "all SKILL_CLEARED results downgraded to UNVERIFIED; "
-            "run the test suite to regenerate."
-        )
+    ledger_status = LedgerStatus.OK
+    verified_pairs: set[tuple[str, str]] = set()
+
+    if not ledger_path.exists():
+        ledger_status = LedgerStatus.MISSING
+    else:
+        try:
+            entries = json.loads(ledger_path.read_text(encoding="utf-8"))
+            verified_pairs = {(e["skill_name"], e["node_type"]) for e in entries}
+        except Exception:  # noqa: BLE001
+            ledger_status = LedgerStatus.CORRUPT
 
     for skill in skills:
         if not skill.covers_node_types:
             skill._verified_node_types = set()
             continue
 
-        if missing:
+        if ledger_status != LedgerStatus.OK:
             skill._verified_node_types = set()
         elif "*" in skill.covers_node_types:
             # "*" is verified for the specific node types that have a ledger entry
@@ -193,11 +220,15 @@ def _apply_ledger(skills: list[Skill], ledger_path: Path) -> None:
                 if (skill.name, nt) in verified_pairs
             }
 
+    return ledger_status
+
 
 def match_skills(
     plan: ParsedPlan,
     skills: list[Skill],
     table_row_counts: dict[str, int] | None = None,
+    *,
+    ledger_status: LedgerStatus,
 ) -> DiagnosisResult:
     matches: list[SkillMatch] = []
     ever_matched: set[str] = set()
@@ -241,4 +272,8 @@ def match_skills(
         else:
             node_type_coverage[node_type] = CoverageStatus.NO_APPLICABLE_SKILL
 
-    return DiagnosisResult(matches=matches, node_type_coverage=node_type_coverage)
+    return DiagnosisResult(
+        matches=matches,
+        node_type_coverage=node_type_coverage,
+        ledger_status=ledger_status,
+    )

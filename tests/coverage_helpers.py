@@ -67,8 +67,17 @@ def _read_ledger(path: Path) -> list[dict]:
 
 
 def _write_ledger_entry(skill_name: str, node_type: str, path: Path) -> None:
-    entries = _read_ledger(path)
-    entry = {"skill_name": skill_name, "node_type": node_type}
-    if entry not in entries:
-        entries.append(entry)
-    path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    # Load existing entries into a dict keyed by (skill_name, node_type), upsert,
+    # then serialize in sorted-key order so two runs with the same tests in
+    # different execution order produce byte-identical JSON. This makes
+    # `git diff tests/coverage_ledger.json` meaningful and CI comparison trivial.
+    # NOTE: not safe under pytest-xdist (-n auto) — concurrent writes to the same
+    # file race. If the suite ever uses parallel workers, run ledger-writing tests
+    # in a dedicated non-parallel group or add a file lock here.
+    existing = {
+        (e["skill_name"], e["node_type"]): e
+        for e in _read_ledger(path)
+    }
+    existing[(skill_name, node_type)] = {"skill_name": skill_name, "node_type": node_type}
+    canonical = [v for _, v in sorted(existing.items())]
+    path.write_text(json.dumps(canonical, indent=2), encoding="utf-8")

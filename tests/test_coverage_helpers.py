@@ -10,11 +10,33 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.skill_matcher import CoverageStatus, load_skills, match_skills
+from core.skill_matcher import CoverageStatus, LedgerStatus, load_skills, match_skills
 from core.explain_parser import parse_explain_json
-from tests.coverage_helpers import VacuousTestError, assert_no_match
+from tests.coverage_helpers import VacuousTestError, assert_no_match, _write_ledger_entry
 
-SKILLS = load_skills()
+_loaded = load_skills()
+SKILLS = _loaded.skills
+
+
+def test_ledger_write_is_canonical(tmp_path):
+    """
+    Writing the same (skill_name, node_type) entries in different orders must
+    produce byte-identical JSON — required for stable git diffs and CI comparison.
+    """
+    path_a = tmp_path / "a.json"
+    path_b = tmp_path / "b.json"
+
+    _write_ledger_entry("missing_index", "Seq Scan", path_a)
+    _write_ledger_entry("stale_statistics", "Index Scan", path_a)
+
+    # Reversed insertion order must produce same output
+    _write_ledger_entry("stale_statistics", "Index Scan", path_b)
+    _write_ledger_entry("missing_index", "Seq Scan", path_b)
+
+    assert path_a.read_text(encoding="utf-8") == path_b.read_text(encoding="utf-8"), (
+        "Ledger writes in different orders produced different JSON — "
+        "the write path must produce canonical (sorted) output"
+    )
 
 
 def test_assert_no_match_raises_on_vacuous_plan(tmp_path):
@@ -90,7 +112,7 @@ def test_unverified_coverage_does_not_produce_skill_cleared(tmp_path):
     ledger_path = tmp_path / "ledger.json"
     ledger_path.write_text("[]", encoding="utf-8")
 
-    skills = load_skills(ledger_path=ledger_path)
+    loaded = load_skills(ledger_path=ledger_path)
 
     high_selectivity_seq_scan = [
         {
@@ -108,7 +130,11 @@ def test_unverified_coverage_does_not_produce_skill_cleared(tmp_path):
         }
     ]
     plan = parse_explain_json(high_selectivity_seq_scan)
-    result = match_skills(plan, skills, table_row_counts={"transactions": 200000})
+    result = match_skills(
+        plan, loaded.skills,
+        table_row_counts={"transactions": 200000},
+        ledger_status=loaded.ledger_status,
+    )
     assert not result.matches
     assert result.node_type_coverage.get("Seq Scan") == CoverageStatus.UNVERIFIED, (
         f"expected UNVERIFIED with empty ledger, got {result.node_type_coverage.get('Seq Scan')}"
@@ -126,7 +152,7 @@ def test_verified_coverage_produces_skill_cleared(tmp_path):
         encoding="utf-8",
     )
 
-    skills = load_skills(ledger_path=ledger_path)
+    loaded = load_skills(ledger_path=ledger_path)
 
     high_selectivity_seq_scan = [
         {
@@ -144,7 +170,11 @@ def test_verified_coverage_produces_skill_cleared(tmp_path):
         }
     ]
     plan = parse_explain_json(high_selectivity_seq_scan)
-    result = match_skills(plan, skills, table_row_counts={"transactions": 200000})
+    result = match_skills(
+        plan, loaded.skills,
+        table_row_counts={"transactions": 200000},
+        ledger_status=loaded.ledger_status,
+    )
     assert not result.matches
     assert result.node_type_coverage.get("Seq Scan") == CoverageStatus.SKILL_CLEARED, (
         f"expected SKILL_CLEARED with ledger entry present, got {result.node_type_coverage.get('Seq Scan')}"
