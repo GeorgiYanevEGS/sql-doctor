@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class LLMError(RuntimeError):
@@ -205,10 +206,76 @@ class AzureOpenAIProvider(LLMProvider):
         return LLMResponse(text=text, provider=self.name, model=self.deployment or "")
 
 
+class ManualProvider(LLMProvider):
+    """
+    For the common bank IT scenario: employees have an M365 Copilot
+    *chat* license, but no programmatic API access (that would require
+    an Entra ID app registration, admin approval, and is still preview).
+
+    Instead of calling an API, this provider writes the grounded prompt
+    to a temp file AND prints it, so the user can paste it into whatever
+    sanctioned AI chat tool they already have access to (Copilot,
+    ChatGPT Enterprise, etc.), then paste the response into a response
+    file and press Enter to continue.
+
+    Why a file instead of reading multi-line paste directly from stdin:
+    pasting multi-line text into a running console app's input() loop is
+    unreliable on Windows terminals (PowerShell/cmd) — the paste can
+    arrive as a premature EOF, or the app may have already exited by the
+    time the remaining lines arrive, which then get interpreted as
+    separate shell commands. Found via real testing. A file sidesteps
+    this entirely: no interactive multi-line stdin parsing needed.
+    """
+
+    name = "manual"
+
+    def __init__(self, response_file: str | None = None, quick: bool = False):
+        import tempfile
+
+        self.quick = quick
+        self.response_file = response_file or str(
+            Path(tempfile.gettempdir()) / "sql_doctor_response.txt"
+        )
+
+    def is_available(self) -> bool:
+        return True  # always "available" — no credentials needed
+
+    def complete(self, prompt: str, *, max_tokens: int = 600) -> LLMResponse:
+        print("\n" + "=" * 70)
+        print("COPY the prompt below into your Copilot / chat tool of choice:")
+        print("=" * 70)
+        print(prompt)
+        print("=" * 70)
+
+        if self.quick:
+            print(
+                "\n(--quick mode: exiting without waiting for a response. "
+                "Read the AI's answer yourself — no automated validation "
+                "will run.)"
+            )
+            return LLMResponse(text="", provider=self.name, model="manual-quick")
+
+        # Clear any stale content from a previous run.
+        Path(self.response_file).write_text("", encoding="utf-8")
+        print(f"\nPaste the AI's FULL response into this file, then SAVE it:")
+        print(f"  {self.response_file}")
+        input("\nOnce saved, press Enter here to continue...")
+
+        text = Path(self.response_file).read_text(encoding="utf-8").strip()
+        if not text:
+            print(
+                f"Warning: {self.response_file} was empty — did you save it "
+                "before pressing Enter?"
+            )
+
+        return LLMResponse(text=text, provider=self.name, model="manual-paste")
+
+
 _PROVIDERS = {
     "ollama": OllamaProvider,
     "claude": ClaudeProvider,
     "azure-openai": AzureOpenAIProvider,
+    "manual": ManualProvider,
 }
 
 

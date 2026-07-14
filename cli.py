@@ -174,8 +174,8 @@ def analyze(
 @app.command()
 def list_skills():
     """Print the loaded deterministic skill library."""
-    skills = load_skills()
-    for s in skills:
+    loaded = load_skills()
+    for s in loaded.skills:
         typer.echo(f"- {s.name} [{s.severity}]: {s.description.strip()}")
 
 
