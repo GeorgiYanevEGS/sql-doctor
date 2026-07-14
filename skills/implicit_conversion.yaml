@@ -1,4 +1,5 @@
 name: implicit_type_conversion
+covers_node_types: ["Seq Scan"]
 description: >
   A function is applied to a column inside the filter/index condition
   (LOWER, UPPER, TO_CHAR, CAST, ::text, etc). This silently disables use

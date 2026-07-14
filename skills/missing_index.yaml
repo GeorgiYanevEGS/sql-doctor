@@ -1,4 +1,5 @@
 name: missing_index
+covers_node_types: ["Seq Scan"]
 description: >
   A sequential scan is filtering a large table by a condition that could
   be served by an index instead. This is the single most common cause of

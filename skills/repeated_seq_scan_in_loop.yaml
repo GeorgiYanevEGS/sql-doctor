@@ -1,4 +1,5 @@
 name: repeated_seq_scan_in_loop
+covers_node_types: ["Seq Scan"]
 description: >
   A sequential scan is being executed repeatedly as the inner side of a
   Nested Loop join — once per row from the outer side. This is the

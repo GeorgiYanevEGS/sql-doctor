@@ -1,4 +1,5 @@
 name: stale_statistics
+covers_node_types: ["*"]
 description: >
   The planner's row estimate for a node is wildly different from the
   actual row count (order-of-magnitude off). This almost always means

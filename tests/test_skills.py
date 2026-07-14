@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.explain_parser import parse_explain_json
-from core.skill_matcher import load_skills, match_skills
+from core.skill_matcher import CoverageStatus, load_skills, match_skills
 
 SKILLS = load_skills()
 
@@ -32,10 +32,10 @@ def test_missing_index():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS, table_row_counts={"transactions": 500000})
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 500000})
+    names = {m.skill_name for m in result.matches}
     assert "missing_index" in names, f"expected missing_index, got {names}"
-    print("PASS: test_missing_index ->", [m.skill_name for m in matches])
+    print("PASS: test_missing_index ->", [m.skill_name for m in result.matches])
 
 
 def test_implicit_conversion():
@@ -55,10 +55,10 @@ def test_implicit_conversion():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS)
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS)
+    names = {m.skill_name for m in result.matches}
     assert "implicit_type_conversion" in names, f"expected implicit_type_conversion, got {names}"
-    print("PASS: test_implicit_conversion ->", [m.skill_name for m in matches])
+    print("PASS: test_implicit_conversion ->", [m.skill_name for m in result.matches])
 
 
 def test_stale_statistics():
@@ -88,10 +88,10 @@ def test_stale_statistics():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS)
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS)
+    names = {m.skill_name for m in result.matches}
     assert "stale_statistics" in names, f"expected stale_statistics, got {names}"
-    print("PASS: test_stale_statistics ->", [m.skill_name for m in matches])
+    print("PASS: test_stale_statistics ->", [m.skill_name for m in result.matches])
 
 
 def test_no_false_positive_on_healthy_plan():
@@ -112,8 +112,8 @@ def test_no_false_positive_on_healthy_plan():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS)
-    assert not matches, f"expected no matches on a healthy plan, got {[m.skill_name for m in matches]}"
+    result = match_skills(plan, SKILLS)
+    assert not result.matches, f"expected no matches on a healthy plan, got {[m.skill_name for m in result.matches]}"
     print("PASS: test_no_false_positive_on_healthy_plan -> []")
 
 
@@ -150,12 +150,12 @@ def test_plain_string_filter_is_not_flagged_as_cast():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS)
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS)
+    names = {m.skill_name for m in result.matches}
     assert "implicit_type_conversion" not in names, (
         f"false positive regression: plain literal comparison flagged as cast, got {names}"
     )
-    print("PASS: test_plain_string_filter_is_not_flagged_as_cast -> ", [m.skill_name for m in matches])
+    print("PASS: test_plain_string_filter_is_not_flagged_as_cast -> ", [m.skill_name for m in result.matches])
 
 
 def test_real_upper_cast_is_still_flagged():
@@ -176,10 +176,10 @@ def test_real_upper_cast_is_still_flagged():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS)
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS)
+    names = {m.skill_name for m in result.matches}
     assert "implicit_type_conversion" in names, f"expected real cast to still be caught, got {names}"
-    print("PASS: test_real_upper_cast_is_still_flagged ->", [m.skill_name for m in matches])
+    print("PASS: test_real_upper_cast_is_still_flagged ->", [m.skill_name for m in result.matches])
 
 
 def test_varchar_to_text_cast_is_not_flagged():
@@ -209,12 +209,12 @@ def test_varchar_to_text_cast_is_not_flagged():
     # Note: 119884 / 200000 ≈ 60% selectivity, so missing_index correctly
     # does NOT fire either (see test_low_selectivity_seq_scan_...). This
     # test only checks the cast false-positive is gone.
-    matches = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
+    names = {m.skill_name for m in result.matches}
     assert "implicit_type_conversion" not in names, (
         f"false positive regression: varchar->text cast flagged as function-wrap, got {names}"
     )
-    print("PASS: test_varchar_to_text_cast_is_not_flagged ->", [m.skill_name for m in matches])
+    print("PASS: test_varchar_to_text_cast_is_not_flagged ->", [m.skill_name for m in result.matches])
 
 
 def test_low_selectivity_seq_scan_not_flagged_even_without_index():
@@ -242,12 +242,12 @@ def test_low_selectivity_seq_scan_not_flagged_even_without_index():
     ]
     plan = parse_explain_json(explain_json)
     # ~200k total rows, 119884 match -> ~60% selectivity -> should NOT be flagged
-    matches = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
+    names = {m.skill_name for m in result.matches}
     assert "missing_index" not in names, (
         f"low-selectivity filter should not trigger missing_index, got {names}"
     )
-    print("PASS: test_low_selectivity_seq_scan_not_flagged_even_without_index -> ", [m.skill_name for m in matches])
+    print("PASS: test_low_selectivity_seq_scan_not_flagged_even_without_index -> ", [m.skill_name for m in result.matches])
 
 
 def test_high_selectivity_seq_scan_still_flagged():
@@ -269,10 +269,10 @@ def test_high_selectivity_seq_scan_still_flagged():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
+    names = {m.skill_name for m in result.matches}
     assert "missing_index" in names, f"expected high-selectivity filter to still trigger missing_index, got {names}"
-    print("PASS: test_high_selectivity_seq_scan_still_flagged ->", [m.skill_name for m in matches])
+    print("PASS: test_high_selectivity_seq_scan_still_flagged ->", [m.skill_name for m in result.matches])
 
 
 def test_repeated_seq_scan_in_loop():
@@ -317,10 +317,64 @@ def test_repeated_seq_scan_in_loop():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS, table_row_counts={"merchant_lookup": 5000})
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS, table_row_counts={"merchant_lookup": 5000})
+    names = {m.skill_name for m in result.matches}
     assert "repeated_seq_scan_in_loop" in names, f"expected repeated_seq_scan_in_loop, got {names}"
-    print("PASS: test_repeated_seq_scan_in_loop ->", [m.skill_name for m in matches])
+    print("PASS: test_repeated_seq_scan_in_loop ->", [m.skill_name for m in result.matches])
+
+
+def test_no_applicable_skill_for_node_type_no_skill_covers():
+    """
+    A Hash Join node with no row estimate error: when stale_statistics (the
+    only skill with "*" coverage) is excluded from the skill list, a Hash
+    Join has no covering skill and must produce NO_APPLICABLE_SKILL.
+    """
+    # Exclude stale_statistics so no skill covers Hash Join via "*"
+    explicit_skills = [s for s in SKILLS if "*" not in s.covers_node_types]
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Hash Join",
+                "Relation Name": None,
+                "Plan Rows": 100,
+                "Actual Rows": 105,
+                "Total Cost": 100.0,
+                "Actual Total Time": 5.0,
+            },
+            "Planning Time": 0.1,
+            "Execution Time": 5.1,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, explicit_skills)
+    assert result.node_type_coverage.get("Hash Join") == CoverageStatus.NO_APPLICABLE_SKILL
+
+
+def test_skill_cleared_when_skill_covers_but_does_not_fire():
+    """
+    A Seq Scan at ~60% selectivity: missing_index covers Seq Scan but
+    correctly doesn't fire. Coverage status must be SKILL_CLEARED — not
+    silent — so the caller knows the node was examined, not just skipped.
+    """
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Filter": "((transactions.txn_type)::text = 'OPER'::text)",
+                "Plan Rows": 120207,
+                "Actual Rows": 119884,
+                "Total Cost": 4606.0,
+                "Actual Total Time": 27.58,
+            },
+            "Planning Time": 1.13,
+            "Execution Time": 30.86,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 200000})
+    assert not result.matches
+    assert result.node_type_coverage.get("Seq Scan") == CoverageStatus.SKILL_CLEARED
 
 
 def test_single_loop_seq_scan_not_flagged_as_repeated():
@@ -341,10 +395,10 @@ def test_single_loop_seq_scan_not_flagged_as_repeated():
         }
     ]
     plan = parse_explain_json(explain_json)
-    matches = match_skills(plan, SKILLS, table_row_counts={"transactions": 5000})
-    names = {m.skill_name for m in matches}
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 5000})
+    names = {m.skill_name for m in result.matches}
     assert "repeated_seq_scan_in_loop" not in names, f"single-loop scan wrongly flagged, got {names}"
-    print("PASS: test_single_loop_seq_scan_not_flagged_as_repeated ->", [m.skill_name for m in matches])
+    print("PASS: test_single_loop_seq_scan_not_flagged_as_repeated ->", [m.skill_name for m in result.matches])
 
 
 if __name__ == "__main__":

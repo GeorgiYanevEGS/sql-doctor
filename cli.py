@@ -37,9 +37,22 @@ def analyze(
     query: str = typer.Option(..., help="The slow SQL query to diagnose"),
     llm_provider: str = typer.Option(
         "none",
-        help="LLM fallback backend: none | ollama | claude | azure-openai",
+        help="LLM fallback backend: none | ollama | claude | azure-openai | manual",
+    ),
+    llm_model: str = typer.Option(
+        None,
+        help="Model name for the chosen provider (e.g. 'gemma3:3b' for ollama). "
+        "Uses each provider's built-in default if not set.",
     ),
     schema: str = typer.Option("public", help="Postgres schema name"),
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="With --llm-provider manual: print the prompt and exit "
+        "immediately, without waiting for a pasted-back response or "
+        "running validation. For fast ad-hoc checks where you'll just "
+        "read the AI's answer yourself.",
+    ),
 ):
     """Run EXPLAIN ANALYZE, match deterministic skills, optionally fall back to LLM."""
 
@@ -57,17 +70,28 @@ def analyze(
     typer.echo("\n--- Running deterministic skill checks (no LLM) ---")
     skills = load_skills()
     table_row_counts = get_table_row_counts(conn, plan.tables_referenced())
-    matches = match_skills(plan, skills, table_row_counts)
+    diagnosis = match_skills(plan, skills, table_row_counts)
 
-    if matches:
-        for m in matches:
+    if diagnosis.matches:
+        for m in diagnosis.matches:
             typer.secho(f"\n[{m.severity.upper()}] {m.skill_name}", fg=typer.colors.YELLOW, bold=True)
             typer.echo(m.explanation)
             typer.echo(f"Suggested fix:\n{m.fix_template}")
         conn.close()
         return
 
-    typer.echo("No deterministic skill matched.")
+    from core.skill_matcher import CoverageStatus
+    coverage = diagnosis.node_type_coverage
+    if all(s == CoverageStatus.SKILL_CLEARED for s in coverage.values()):
+        typer.echo("No issues found — all node types examined and cleared by skill checks.")
+    elif any(s in (CoverageStatus.NO_APPLICABLE_SKILL, CoverageStatus.UNVERIFIED) for s in coverage.values()):
+        uncovered = [nt for nt, s in coverage.items() if s != CoverageStatus.SKILL_CLEARED]
+        typer.echo(
+            f"No deterministic skill matched. "
+            f"Node type(s) not fully covered by skills: {', '.join(uncovered)}"
+        )
+    else:
+        typer.echo("No deterministic skill matched.")
 
     if llm_provider == "none":
         typer.echo(
@@ -85,7 +109,15 @@ def analyze(
     prompt = build_grounded_prompt(query, plan.summary(), schemas)
 
     try:
-        provider = get_provider(llm_provider)
+        if llm_provider == "azure-openai" and llm_model:
+            provider_kwargs = {"deployment": llm_model}
+        elif llm_provider == "manual":
+            provider_kwargs = {"quick": quick}
+        elif llm_model:
+            provider_kwargs = {"model": llm_model}
+        else:
+            provider_kwargs = {}
+        provider = get_provider(llm_provider, **provider_kwargs)
     except ValueError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(1)
@@ -103,6 +135,11 @@ def analyze(
     except LLMError as exc:
         typer.secho(f"LLM call failed: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1)
+
+    if not response.text:
+        # --quick mode: nothing was returned to validate, the prompt was
+        # already printed above. Nothing more to do.
+        return
 
     validation = validate_llm_suggestion(response.text, schemas)
 
