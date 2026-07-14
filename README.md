@@ -89,7 +89,9 @@ sql-doctor/
 │   ├── missing_index.yaml
 │   ├── implicit_conversion.yaml
 │   ├── repeated_seq_scan_in_loop.yaml
-│   └── stale_stats.yaml
+│   ├── stale_stats.yaml
+│   ├── hash_join_disk_spill.yaml
+│   └── sort_spill_to_disk.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -103,7 +105,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 37 tests
+python -m pytest tests/ -v         # runs all 45 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -123,14 +125,14 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 4 skills (with selectivity- and
-loop-awareness), provider abstraction (3 backends), schema
-introspection, validator, coverage ledger, CLI wiring, 37 tests:
+What's implemented: parser, 6 skills (with selectivity-, loop-, and
+spill-awareness), provider abstraction (3 backends), schema
+introspection, validator, coverage ledger, CLI wiring, 45 tests:
 
-- **13 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **17 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **6 negative tests** — each proves a specific (skill, node type) pair
+- **10 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
@@ -147,7 +149,7 @@ introspection, validator, coverage ledger, CLI wiring, 37 tests:
 
 Historical validation happened against a real database and is captured in
 fixed regression tests. CI runs on every push and pull request to main:
-the `test` job runs all 37 tests, and the `ledger-integrity` job
+the `test` job runs all 45 tests, and the `ledger-integrity` job
 regenerates the coverage ledger and diffs against the committed state to
 catch a stale ledger before merge.
 
@@ -184,7 +186,3 @@ What's next (not yet done):
   Fix for a later iteration: parse `CREATE INDEX <name>` patterns
   specifically and treat that name as "proposed", not "referenced".
 
-- **Coverage ledger CI enforcement is not yet built**. The committed
-  `tests/coverage_ledger.json` is authoritative but only verified
-  manually — no CI step regenerates it and diffs to catch a stale
-  ledger before merge.

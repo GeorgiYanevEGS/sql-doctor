@@ -402,6 +402,167 @@ def test_single_loop_seq_scan_not_flagged_as_repeated():
     print("PASS: test_single_loop_seq_scan_not_flagged_as_repeated ->", [m.skill_name for m in result.matches])
 
 
+def test_hash_join_disk_spill():
+    """
+    Hash Join where the build side grew beyond work_mem and spilled to disk:
+    Hash Batches (4) > Original Hash Batches (1). Must fire hash_join_disk_spill.
+    """
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Hash Join",
+                "Hash Cond": "(t.merchant_id = m.id)",
+                "Plan Rows": 50000,
+                "Actual Rows": 45000,
+                "Total Cost": 8500.0,
+                "Actual Total Time": 4200.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 50000,
+                        "Actual Rows": 45000,
+                        "Total Cost": 4000.0,
+                        "Actual Total Time": 1200.0,
+                    },
+                    {
+                        "Node Type": "Hash",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 980,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 800.0,
+                        "Hash Batches": 4,
+                        "Original Hash Batches": 1,
+                        "Hash Buckets": 1024,
+                        "Original Hash Buckets": 1024,
+                        "Peak Memory Usage": 8192,
+                    },
+                ],
+            },
+            "Planning Time": 1.5,
+            "Execution Time": 4201.5,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_join_disk_spill" in names, f"expected hash_join_disk_spill, got {names}"
+
+
+def test_no_false_positive_hash_join_no_spill():
+    """Hash Join where build side fits in memory (Batches == Original == 1) — must not fire."""
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Hash Join",
+                "Hash Cond": "(t.account_id = a.id)",
+                "Plan Rows": 5000,
+                "Actual Rows": 4800,
+                "Total Cost": 850.0,
+                "Actual Total Time": 42.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 4800,
+                        "Total Cost": 400.0,
+                        "Actual Total Time": 22.0,
+                    },
+                    {
+                        "Node Type": "Hash",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 980,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 10.0,
+                        "Hash Batches": 1,
+                        "Original Hash Batches": 1,
+                        "Hash Buckets": 1024,
+                        "Original Hash Buckets": 1024,
+                        "Peak Memory Usage": 256,
+                    },
+                ],
+            },
+            "Planning Time": 0.5,
+            "Execution Time": 42.5,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_join_disk_spill" not in names, f"no-spill hash join wrongly flagged, got {names}"
+
+
+def test_sort_spill_to_disk():
+    """Sort node using external merge (disk spill) — must fire sort_spill_to_disk."""
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Sort",
+                "Sort Key": ["created_at DESC"],
+                "Sort Method": "external merge",
+                "Sort Space Used": 102400,
+                "Sort Space Type": "Disk",
+                "Plan Rows": 500000,
+                "Actual Rows": 500000,
+                "Total Cost": 95000.0,
+                "Actual Total Time": 8200.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 500000,
+                        "Actual Rows": 500000,
+                        "Total Cost": 45000.0,
+                        "Actual Total Time": 2200.0,
+                    }
+                ],
+            },
+            "Planning Time": 0.8,
+            "Execution Time": 8201.0,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "sort_spill_to_disk" in names, f"expected sort_spill_to_disk, got {names}"
+
+
+def test_no_false_positive_sort_in_memory():
+    """Sort node using in-memory quicksort — must not be flagged."""
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Sort",
+                "Sort Key": ["amount DESC"],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 512,
+                "Sort Space Type": "Memory",
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 120.0,
+                "Actual Total Time": 8.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 1000,
+                        "Total Cost": 100.0,
+                        "Actual Total Time": 6.0,
+                    }
+                ],
+            },
+            "Planning Time": 0.3,
+            "Execution Time": 8.3,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "sort_spill_to_disk" not in names, f"in-memory sort wrongly flagged, got {names}"
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

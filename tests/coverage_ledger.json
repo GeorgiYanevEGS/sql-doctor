@@ -1,5 +1,9 @@
 [
   {
+    "skill_name": "hash_join_disk_spill",
+    "node_type": "Hash"
+  },
+  {
     "skill_name": "implicit_type_conversion",
     "node_type": "Seq Scan"
   },
@@ -12,6 +16,14 @@
     "node_type": "Seq Scan"
   },
   {
+    "skill_name": "sort_spill_to_disk",
+    "node_type": "Sort"
+  },
+  {
+    "skill_name": "stale_statistics",
+    "node_type": "Hash"
+  },
+  {
     "skill_name": "stale_statistics",
     "node_type": "Index Scan"
   },
@@ -22,5 +34,9 @@
   {
     "skill_name": "stale_statistics",
     "node_type": "Seq Scan"
+  },
+  {
+    "skill_name": "stale_statistics",
+    "node_type": "Sort"
   }
 ]

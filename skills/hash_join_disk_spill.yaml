@@ -1,0 +1,16 @@
+name: hash_join_disk_spill
+covers_node_types: ["Hash"]
+# Root cause shared with sort_spill_to_disk: work_mem undersized relative to
+# actual data volume. Detection differs: comparing Hash Batches vs Original Hash Batches.
+detects:
+  node_type: "Hash"
+  requires_hash_spill: true
+severity: high
+explanation: >
+  The Hash Join's build phase grew beyond work_mem, spilling to disk in
+  multiple batches. Every additional batch requires re-reading the probe side,
+  multiplying I/O by the number of batches.
+fix_template: >
+  1) Increase work_mem for this session: SET work_mem = '256MB';
+  2) Run ANALYZE on the build-side table if the planner row estimate was wrong.
+  3) If the table is permanently large, consider a permanent postgresql.conf increase.

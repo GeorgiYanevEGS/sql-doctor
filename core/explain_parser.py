@@ -21,6 +21,14 @@ class PlanNode:
     total_cost: float
     actual_total_time: float
     actual_loops: int = 1
+    # Hash node only: populated when Node Type == "Hash". Batches > original_hash_batches
+    # means the build side grew beyond work_mem and spilled to disk mid-execution.
+    hash_batches: int | None = None
+    original_hash_batches: int | None = None
+    # Sort node only: populated when Node Type == "Sort". "external merge" means the
+    # sort exceeded work_mem and wrote sorted runs to disk.
+    sort_method: str | None = None
+    sort_space_type: str | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -81,6 +89,10 @@ def _parse_node(raw: dict) -> PlanNode:
         total_cost=float(raw.get("Total Cost", 0)),
         actual_total_time=float(raw.get("Actual Total Time", 0)),
         actual_loops=int(raw.get("Actual Loops", 1)),
+        hash_batches=int(raw["Hash Batches"]) if "Hash Batches" in raw else None,
+        original_hash_batches=int(raw["Original Hash Batches"]) if "Original Hash Batches" in raw else None,
+        sort_method=raw.get("Sort Method"),
+        sort_space_type=raw.get("Sort Space Type"),
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

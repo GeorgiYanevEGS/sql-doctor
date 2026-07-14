@@ -241,3 +241,191 @@ def test_negative_stale_statistics_accurate_nested_loop():
         ],
         SKILLS,
     )
+
+
+def test_negative_stale_statistics_accurate_hash():
+    """
+    Hash node where Plan Rows is close to Actual Rows (ratio ~0.98).
+    stale_statistics covers "*" so it must be proven not to fire on Hash nodes.
+    Registers (stale_statistics, Hash) in the ledger.
+    """
+    assert_no_match(
+        "stale_statistics",
+        "Hash",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Hash Join",
+                    "Hash Cond": "(t.merchant_id = m.id)",
+                    "Plan Rows": 1000,
+                    "Actual Rows": 980,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 120.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 1000,
+                            "Actual Rows": 980,
+                            "Total Cost": 300.0,
+                            "Actual Total Time": 80.0,
+                        },
+                        {
+                            "Node Type": "Hash",
+                            "Plan Rows": 500,
+                            "Actual Rows": 490,
+                            "Total Cost": 100.0,
+                            "Actual Total Time": 20.0,
+                            "Hash Batches": 1,
+                            "Original Hash Batches": 1,
+                            "Hash Buckets": 1024,
+                            "Original Hash Buckets": 1024,
+                            "Peak Memory Usage": 4096,
+                        },
+                    ],
+                },
+                "Planning Time": 0.5,
+                "Execution Time": 120.5,
+            }
+        ],
+        SKILLS,
+    )
+
+
+def test_negative_stale_statistics_accurate_sort():
+    """
+    Sort node where Plan Rows is close to Actual Rows (ratio ~1.01).
+    stale_statistics covers "*" so it must be proven not to fire on Sort nodes.
+    Registers (stale_statistics, Sort) in the ledger.
+    """
+    assert_no_match(
+        "stale_statistics",
+        "Sort",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Sort",
+                    "Sort Key": ["created_at DESC"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 512,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1010,
+                    "Total Cost": 800.0,
+                    "Actual Total Time": 15.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 1000,
+                            "Actual Rows": 1010,
+                            "Total Cost": 600.0,
+                            "Actual Total Time": 12.0,
+                        }
+                    ],
+                },
+                "Planning Time": 0.2,
+                "Execution Time": 15.2,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
+# hash_join_disk_spill
+# ---------------------------------------------------------------------------
+
+
+def test_negative_hash_join_disk_spill_no_spill():
+    """
+    Hash node where Hash Batches == Original Hash Batches (1 == 1): build side
+    fit entirely in work_mem. hash_join_disk_spill must not fire.
+    Registers (hash_join_disk_spill, Hash) in the ledger.
+    """
+    assert_no_match(
+        "hash_join_disk_spill",
+        "Hash",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Hash Join",
+                    "Hash Cond": "(t.merchant_id = m.id)",
+                    "Plan Rows": 50000,
+                    "Actual Rows": 45000,
+                    "Total Cost": 8500.0,
+                    "Actual Total Time": 800.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 50000,
+                            "Actual Rows": 45000,
+                            "Total Cost": 4000.0,
+                            "Actual Total Time": 600.0,
+                        },
+                        {
+                            "Node Type": "Hash",
+                            "Plan Rows": 1000,
+                            "Actual Rows": 980,
+                            "Total Cost": 200.0,
+                            "Actual Total Time": 100.0,
+                            "Hash Batches": 1,
+                            "Original Hash Batches": 1,
+                            "Hash Buckets": 1024,
+                            "Original Hash Buckets": 1024,
+                            "Peak Memory Usage": 4096,
+                        },
+                    ],
+                },
+                "Planning Time": 0.5,
+                "Execution Time": 800.5,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
+# sort_spill_to_disk
+# ---------------------------------------------------------------------------
+
+
+def test_negative_sort_spill_to_disk_in_memory():
+    """
+    Sort node using quicksort (Sort Method != "external merge"): sort fit in
+    work_mem. sort_spill_to_disk must not fire.
+    Registers (sort_spill_to_disk, Sort) in the ledger.
+    """
+    assert_no_match(
+        "sort_spill_to_disk",
+        "Sort",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Sort",
+                    "Sort Key": ["created_at DESC"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 512,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 5000.0,
+                    "Actual Total Time": 200.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 10000,
+                            "Actual Rows": 10000,
+                            "Total Cost": 4000.0,
+                            "Actual Total Time": 150.0,
+                        }
+                    ],
+                },
+                "Planning Time": 0.3,
+                "Execution Time": 200.3,
+            }
+        ],
+        SKILLS,
+    )

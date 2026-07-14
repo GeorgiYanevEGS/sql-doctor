@@ -153,6 +153,21 @@ class Skill:
             if selectivity > rules["max_selectivity_ratio"]:
                 return False
 
+        # Hash join disk spill: build side grew beyond work_mem and batched to disk.
+        # Both fields are None on non-Hash nodes, so this rule is safely a no-op there.
+        # Root cause shared with requires_sort_spill: work_mem undersized vs. data volume.
+        if rules.get("requires_hash_spill"):
+            if node.hash_batches is None or node.original_hash_batches is None:
+                return False
+            if node.hash_batches <= node.original_hash_batches:
+                return False
+
+        # Sort spill to disk: sort exceeded work_mem and used external merge.
+        # Root cause shared with requires_hash_spill: work_mem undersized vs. data volume.
+        if rules.get("requires_sort_spill"):
+            if node.sort_method != "external merge":
+                return False
+
         return True
 
     def fix_text(self, node: PlanNode) -> str:

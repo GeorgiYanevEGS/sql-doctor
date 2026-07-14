@@ -1,0 +1,16 @@
+name: sort_spill_to_disk
+covers_node_types: ["Sort"]
+# Root cause shared with hash_join_disk_spill: work_mem undersized relative to
+# actual data volume. Detection: Sort Method == "external merge".
+detects:
+  node_type: "Sort"
+  requires_sort_spill: true
+severity: high
+explanation: >
+  The Sort node used external merge — the sort exceeded work_mem and wrote
+  sorted runs to disk. Disk sorts can be orders of magnitude slower than
+  in-memory sorts for large data volumes.
+fix_template: >
+  1) Increase work_mem: SET work_mem = '256MB'; (tune to Sort Space Used reported in EXPLAIN).
+  2) Reduce rows reaching the Sort via earlier filtering or pagination.
+  3) An index on the sort key may eliminate the Sort node entirely.
