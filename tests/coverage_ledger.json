@@ -1,0 +1,26 @@
+[
+  {
+    "skill_name": "missing_index",
+    "node_type": "Seq Scan"
+  },
+  {
+    "skill_name": "implicit_type_conversion",
+    "node_type": "Seq Scan"
+  },
+  {
+    "skill_name": "repeated_seq_scan_in_loop",
+    "node_type": "Seq Scan"
+  },
+  {
+    "skill_name": "stale_statistics",
+    "node_type": "Seq Scan"
+  },
+  {
+    "skill_name": "stale_statistics",
+    "node_type": "Index Scan"
+  },
+  {
+    "skill_name": "stale_statistics",
+    "node_type": "Nested Loop"
+  }
+]
