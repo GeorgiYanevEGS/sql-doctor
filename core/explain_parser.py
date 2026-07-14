@@ -20,6 +20,7 @@ class PlanNode:
     actual_rows: float
     total_cost: float
     actual_total_time: float
+    actual_loops: int = 1
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -59,10 +60,11 @@ class ParsedPlan:
         for node in self.all_nodes():
             rel = f" on {node.relation_name}" if node.relation_name else ""
             idx = f" using {node.index_name}" if node.index_name else ""
+            loops = f", loops={node.actual_loops}" if node.actual_loops > 1 else ""
             lines.append(
                 f"- {node.node_type}{rel}{idx}: "
                 f"est. {node.plan_rows:.0f} rows, actual {node.actual_rows:.0f} rows, "
-                f"cost={node.total_cost:.1f}, time={node.actual_total_time:.2f}ms"
+                f"cost={node.total_cost:.1f}, time={node.actual_total_time:.2f}ms{loops}"
             )
         return "\n".join(lines)
 
@@ -78,6 +80,7 @@ def _parse_node(raw: dict) -> PlanNode:
         actual_rows=float(raw.get("Actual Rows", 0)),
         total_cost=float(raw.get("Total Cost", 0)),
         actual_total_time=float(raw.get("Actual Total Time", 0)),
+        actual_loops=int(raw.get("Actual Loops", 1)),
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

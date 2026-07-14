@@ -275,6 +275,78 @@ def test_high_selectivity_seq_scan_still_flagged():
     print("PASS: test_high_selectivity_seq_scan_still_flagged ->", [m.skill_name for m in matches])
 
 
+def test_repeated_seq_scan_in_loop():
+    """
+    Simulates a classic correlated-subquery-in-disguise pattern: a
+    Nested Loop where the inner Seq Scan runs once per outer row (5000
+    loops), re-scanning a small unindexed lookup table each time.
+    """
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Nested Loop",
+                "Relation Name": None,
+                "Plan Rows": 5000,
+                "Actual Rows": 5000,
+                "Total Cost": 55000.0,
+                "Actual Total Time": 890.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 90.0,
+                        "Actual Total Time": 12.0,
+                        "Actual Loops": 1,
+                    },
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "merchant_lookup",
+                        "Filter": "(merchant_code = transactions.merchant_code)",
+                        "Plan Rows": 1,
+                        "Actual Rows": 1,
+                        "Total Cost": 8.5,
+                        "Actual Total Time": 0.15,
+                        "Actual Loops": 5000,
+                    },
+                ],
+            },
+            "Planning Time": 0.4,
+            "Execution Time": 891.0,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    matches = match_skills(plan, SKILLS, table_row_counts={"merchant_lookup": 5000})
+    names = {m.skill_name for m in matches}
+    assert "repeated_seq_scan_in_loop" in names, f"expected repeated_seq_scan_in_loop, got {names}"
+    print("PASS: test_repeated_seq_scan_in_loop ->", [m.skill_name for m in matches])
+
+
+def test_single_loop_seq_scan_not_flagged_as_repeated():
+    """A normal Seq Scan (loops=1) must not trigger the repeated-scan skill."""
+    explain_json = [
+        {
+            "Plan": {
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 5000,
+                "Actual Rows": 5000,
+                "Total Cost": 90.0,
+                "Actual Total Time": 12.0,
+                "Actual Loops": 1,
+            },
+            "Planning Time": 0.1,
+            "Execution Time": 12.1,
+        }
+    ]
+    plan = parse_explain_json(explain_json)
+    matches = match_skills(plan, SKILLS, table_row_counts={"transactions": 5000})
+    names = {m.skill_name for m in matches}
+    assert "repeated_seq_scan_in_loop" not in names, f"single-loop scan wrongly flagged, got {names}"
+    print("PASS: test_single_loop_seq_scan_not_flagged_as_repeated ->", [m.skill_name for m in matches])
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()
@@ -285,4 +357,6 @@ if __name__ == "__main__":
     test_varchar_to_text_cast_is_not_flagged()
     test_low_selectivity_seq_scan_not_flagged_even_without_index()
     test_high_selectivity_seq_scan_still_flagged()
+    test_repeated_seq_scan_in_loop()
+    test_single_loop_seq_scan_not_flagged_as_repeated()
     print("\nAll tests passed.")

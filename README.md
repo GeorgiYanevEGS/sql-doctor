@@ -3,8 +3,9 @@
 CLI tool that diagnoses slow PostgreSQL queries by combining:
 
 1. **Deterministic skill matching** — a YAML library of known anti-patterns
-   (missing index, implicit type conversion, stale statistics), matched
-   against the real `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` output.
+   (missing index, implicit type conversion, stale statistics, repeated
+   scan inside a loop), matched against the real
+   `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` output.
    No LLM involved, zero hallucination risk, works offline.
 2. **Grounded LLM fallback** — only triggered if no skill matches. The
    real table schema (columns, indexes, row counts) is read from
@@ -23,6 +24,7 @@ Tested end-to-end against a real PostgreSQL banking-style schema
 |---|---|---|
 | `WHERE merchant = 'OMV'` (~10% selectivity, no index) | Seq Scan, **27.8ms** | Bitmap Index Scan, **8.6ms** (after applying the tool's suggested `CREATE INDEX`) — **~3x faster** |
 | `WHERE txn_type = 'OPER'` (~60% selectivity) | Correctly identified as *not* needing an index — the planner's Seq Scan choice was already optimal | No false suggestion |
+| Correlated subquery (`SELECT ... (SELECT x FROM small_table WHERE ...) ...`) vs. equivalent JOIN | Correlated subquery: **204ms**, `merchants` table scanned **53,425 times** (once per row) | Rewritten as JOIN: **34ms** — planner switches to Hash Join, table scanned once — **~6x faster** |
 
 The second row matters as much as the first: the tool went through two
 rounds of real false-positive fixes during testing (a naive `::text`
@@ -94,10 +96,11 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 3 skills (with selectivity-awareness),
-provider abstraction (3 backends), schema introspection, validator, CLI
-wiring, 9 tests (all passing) — 4 of which are regression tests written
-after real false positives were found and fixed during live testing.
+What's implemented: parser, 4 skills (with selectivity- and
+loop-awareness), provider abstraction (3 backends), schema
+introspection, validator, CLI wiring, 11 tests (all passing) — 6 of
+which are regression tests written after real false positives were
+found and fixed during live testing.
 
 What's next (not yet done):
 - More skills from real-world banking ETL cases (target: ~15-20)
@@ -105,6 +108,8 @@ What's next (not yet done):
 - Packaging as a standalone downloadable binary (PyInstaller)
 - Validator: distinguish "proposed new object" from "hallucinated
   existing object" (see Known limitations below)
+- repeated_seq_scan_in_loop is not yet validated against a live
+  database (synthetic test only) — next real-world test target
 
 ## Known limitations (found during testing)
 

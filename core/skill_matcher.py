@@ -84,6 +84,9 @@ class Skill:
         if "min_actual_rows" in rules and node.actual_rows < rules["min_actual_rows"]:
             return False
 
+        if "min_actual_loops" in rules and node.actual_loops < rules["min_actual_loops"]:
+            return False
+
         if "max_selectivity_ratio" in rules:
             total_rows = table_row_counts.get(node.relation_name or "")
             # Without a known table size we can't judge selectivity — err

@@ -1,0 +1,40 @@
+name: repeated_seq_scan_in_loop
+description: >
+  A sequential scan is being executed repeatedly as the inner side of a
+  Nested Loop join — once per row from the outer side. This is the
+  single-query cousin of the classic N+1 problem: instead of one
+  set-based scan, the table gets fully scanned dozens, hundreds, or
+  thousands of times. Extremely common when a correlated subquery or a
+  poorly-indexed join condition forces the planner into this pattern.
+
+detects:
+  node_type: "Seq Scan"
+  requires_no_index: true
+  min_actual_loops: 50
+
+severity: high
+
+explanation: >
+  This table is being sequentially scanned once for every row processed
+  by an outer part of the query — the EXPLAIN output shows "loops"
+  greater than 1. Each loop re-reads the whole table from scratch. This
+  commonly shows up either as the inner side of a Nested Loop join, or
+  as a correlated subquery (a subquery in SELECT/WHERE that references
+  an outer column, forcing PostgreSQL to re-run it per row). Either way,
+  it's functionally the same waste as an application issuing one query
+  per row in a loop — except it's happening inside a single SQL
+  statement, where it's easy to miss. Confirmed in testing: a
+  correlated-subquery version of a query ran at 204ms, vs. 34ms for the
+  equivalent rewritten as a JOIN — a ~6x difference from this pattern
+  alone.
+
+fix_template: >
+  Two options for "{table}":
+  1) Add an index on the join/filter column so each loop iteration does
+     an Index Scan instead of a full Seq Scan:
+     CREATE INDEX CONCURRENTLY idx_{table}_join_col ON {table} (<join_column>);
+  2) If this is a correlated subquery, rewrite it as an explicit JOIN
+     (or LEFT JOIN, if the subquery can return no rows) — this lets the
+     planner consider a Hash Join or Merge Join, which scan "{table}"
+     once instead of once per outer row.
+  Either fix turns "table scanned N times" into "table scanned once".
