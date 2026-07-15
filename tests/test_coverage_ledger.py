@@ -287,6 +287,108 @@ def test_negative_nested_loop_bad_plan_good_estimate():
 
 
 # ---------------------------------------------------------------------------
+# repeated_index_scan_in_loop
+# ---------------------------------------------------------------------------
+
+
+def test_negative_repeated_index_scan_in_loop_few_loops():
+    """
+    Index Scan executing only 10 times (below the 50-loop threshold) —
+    repeated_index_scan_in_loop must not fire.
+    Registers (repeated_index_scan_in_loop, Index Scan) in the ledger.
+    """
+    assert_no_match(
+        "repeated_index_scan_in_loop",
+        "Index Scan",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Nested Loop",
+                    "Plan Rows": 10,
+                    "Actual Rows": 10,
+                    "Total Cost": 80.0,
+                    "Actual Total Time": 2.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 10,
+                            "Actual Rows": 10,
+                            "Total Cost": 40.0,
+                            "Actual Total Time": 1.0,
+                            "Actual Loops": 1,
+                        },
+                        {
+                            "Node Type": "Index Scan",
+                            "Relation Name": "accounts",
+                            "Index Name": "idx_accounts_id",
+                            "Index Cond": "(id = transactions.account_id)",
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 4.0,
+                            "Actual Total Time": 0.08,
+                            "Actual Loops": 10,
+                        },
+                    ],
+                },
+                "Planning Time": 0.1,
+                "Execution Time": 2.1,
+            }
+        ],
+        SKILLS,
+    )
+
+
+def test_negative_repeated_index_only_scan_in_loop_few_loops():
+    """
+    Index Only Scan executing only 10 times — repeated_index_scan_in_loop
+    must not fire.
+    Registers (repeated_index_scan_in_loop, Index Only Scan) in the ledger.
+    """
+    assert_no_match(
+        "repeated_index_scan_in_loop",
+        "Index Only Scan",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Nested Loop",
+                    "Plan Rows": 10,
+                    "Actual Rows": 10,
+                    "Total Cost": 60.0,
+                    "Actual Total Time": 1.5,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 10,
+                            "Actual Rows": 10,
+                            "Total Cost": 40.0,
+                            "Actual Total Time": 1.0,
+                            "Actual Loops": 1,
+                        },
+                        {
+                            "Node Type": "Index Only Scan",
+                            "Relation Name": "accounts",
+                            "Index Name": "idx_accounts_id_balance",
+                            "Index Cond": "(id = transactions.account_id)",
+                            "Heap Fetches": 0,
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 3.0,
+                            "Actual Total Time": 0.06,
+                            "Actual Loops": 10,
+                        },
+                    ],
+                },
+                "Planning Time": 0.1,
+                "Execution Time": 1.6,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # parallel_worker_underutilization
 # ---------------------------------------------------------------------------
 

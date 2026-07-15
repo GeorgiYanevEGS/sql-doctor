@@ -52,6 +52,14 @@
     "node_type": "Sort"
   },
   {
+    "skill_name": "repeated_index_scan_in_loop",
+    "node_type": "Index Only Scan"
+  },
+  {
+    "skill_name": "repeated_index_scan_in_loop",
+    "node_type": "Index Scan"
+  },
+  {
     "skill_name": "repeated_seq_scan_in_loop",
     "node_type": "Seq Scan"
   },

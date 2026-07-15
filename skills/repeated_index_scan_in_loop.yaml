@@ -1,0 +1,29 @@
+name: repeated_index_scan_in_loop
+covers_node_types: ["Index Scan", "Index Only Scan"]
+detects:
+  node_type: ["Index Scan", "Index Only Scan"]
+  min_actual_loops: 50
+severity: high
+explanation: >
+  This index lookup is being executed once per row from an outer part of the
+  query — the EXPLAIN output shows many loops. Each iteration is individually
+  cheap (it uses an index), so the per-loop cost looks harmless in isolation.
+  The problem is cumulative: thousands of index lookups, each triggering
+  separate random I/O, add up to significant total work. This is the indexed
+  cousin of repeated_seq_scan_in_loop — harder to spot precisely because the
+  index makes each iteration look efficient.
+fix_template: >
+  The index on {table} is being probed once per outer row. Consider whether
+  the join driving this lookup could be restructured:
+  1) If this is the inner side of a Nested Loop driven by a large outer
+     table, check whether a Hash Join or Merge Join would be cheaper overall.
+     You can test the alternative plan with SET enable_nestloop = off for
+     this session.
+  2) If this appears as a correlated subquery (a subquery in SELECT or WHERE
+     referencing an outer column), rewrite it as an explicit JOIN — this lets
+     the planner consider set-based join strategies that scan {table} once
+     instead of once per outer row.
+  3) If many loops are expected and unavoidable (e.g. a small lookup table
+     joined to a large fact table with high selectivity), verify that
+     work_mem is large enough for the hash table to stay in memory — a
+     spilling Hash Join is not always better than a Nested Loop.

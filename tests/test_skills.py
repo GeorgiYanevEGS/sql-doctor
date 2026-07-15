@@ -1145,6 +1145,147 @@ def test_no_false_positive_gather_merge_full_workers():
     )
 
 
+def test_repeated_index_scan_in_loop():
+    """
+    Index Scan on accounts running 5000 times as the inner side of a Nested
+    Loop — individually cheap, cumulatively expensive. repeated_index_scan_in_loop
+    must fire. Outer estimate is accurate so nested_loop_bad_plan stays silent.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 30000.0,
+            "Actual Total Time": 450.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 100.0,
+                    "Actual Total Time": 12.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Scan",
+                    "Relation Name": "accounts",
+                    "Index Name": "idx_accounts_id",
+                    "Index Cond": "(id = transactions.account_id)",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 4.0,
+                    "Actual Total Time": 0.08,
+                    "Actual Loops": 5000,
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 450.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "repeated_index_scan_in_loop" in names, (
+        f"expected repeated_index_scan_in_loop (5000 loops), got {names}"
+    )
+
+
+def test_repeated_index_only_scan_in_loop():
+    """
+    Index Only Scan running 5000 times — same pattern as repeated_index_scan_in_loop
+    but for the Index Only Scan variant. Verifies list membership check works for
+    the second entry in node_type: ["Index Scan", "Index Only Scan"].
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 25000.0,
+            "Actual Total Time": 380.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 100.0,
+                    "Actual Total Time": 12.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Only Scan",
+                    "Relation Name": "accounts",
+                    "Index Name": "idx_accounts_id_balance",
+                    "Index Cond": "(id = transactions.account_id)",
+                    "Heap Fetches": 0,
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 3.0,
+                    "Actual Total Time": 0.06,
+                    "Actual Loops": 5000,
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 380.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "repeated_index_scan_in_loop" in names, (
+        f"expected repeated_index_scan_in_loop for Index Only Scan (5000 loops), got {names}"
+    )
+
+
+def test_no_false_positive_index_scan_low_loops():
+    """
+    Index Scan running only 10 times — well below the 50-loop threshold.
+    repeated_index_scan_in_loop must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 10,
+            "Actual Rows": 10,
+            "Total Cost": 80.0,
+            "Actual Total Time": 2.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 10,
+                    "Actual Rows": 10,
+                    "Total Cost": 40.0,
+                    "Actual Total Time": 1.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Scan",
+                    "Relation Name": "accounts",
+                    "Index Name": "idx_accounts_id",
+                    "Index Cond": "(id = transactions.account_id)",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 4.0,
+                    "Actual Total Time": 0.08,
+                    "Actual Loops": 10,
+                },
+            ],
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 2.1,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "repeated_index_scan_in_loop" not in names, (
+        f"10 loops is below threshold, should not fire, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()
