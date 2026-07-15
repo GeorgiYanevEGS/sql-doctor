@@ -1,7 +1,7 @@
 name: join_condition_function_wrap
-covers_node_types: ["Hash Join", "Merge Join"]
+covers_node_types: ["Hash Join", "Merge Join", "Nested Loop"]
 detects:
-  node_type: ["Hash Join", "Merge Join"]
+  node_type: ["Hash Join", "Merge Join", "Nested Loop"]
   condition_pattern: "\\b(lower|upper|to_char|to_number|cast)\\s*\\("
 severity: medium
 explanation: >

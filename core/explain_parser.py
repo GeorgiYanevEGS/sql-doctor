@@ -46,7 +46,23 @@ class PlanNode:
     # keys that prevent index use and force less efficient join strategies.
     hash_cond: str | None = None
     merge_cond: str | None = None
+    # Bitmap Heap Scan only: populated when work_mem is too small to hold the
+    # bitmap exactly, causing PostgreSQL to switch to lossy page-level tracking.
+    # Rows on lossy pages must be rechecked against the condition after the heap
+    # fetch, so rows_removed_by_recheck reflects wasted heap reads.
+    rows_removed_by_recheck: int = 0
+    exact_heap_blocks: int | None = None
+    lossy_heap_blocks: int | None = None
     children: list["PlanNode"] = field(default_factory=list)
+
+    @property
+    def recheck_waste_ratio(self) -> float:
+        """Fraction of all heap reads that were wasted on lossy-page rechecks.
+        Bounded 0–1; 0.0 when there are no lossy blocks or all rows passed recheck."""
+        denom = self.actual_rows + self.rows_removed_by_recheck
+        if denom <= 0:
+            return 0.0
+        return self.rows_removed_by_recheck / denom
 
     @property
     def row_estimate_error_ratio(self) -> float:
@@ -116,6 +132,9 @@ def _parse_node(raw: dict) -> PlanNode:
         workers_launched=int(raw["Workers Launched"]) if "Workers Launched" in raw else None,
         hash_cond=raw.get("Hash Cond"),
         merge_cond=raw.get("Merge Cond"),
+        rows_removed_by_recheck=int(raw.get("Rows Removed by Index Recheck", 0)),
+        exact_heap_blocks=int(raw["Exact Heap Blocks"]) if "Exact Heap Blocks" in raw else None,
+        lossy_heap_blocks=int(raw["Lossy Heap Blocks"]) if "Lossy Heap Blocks" in raw else None,
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

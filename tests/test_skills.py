@@ -1640,6 +1640,221 @@ def test_no_false_positive_hash_join_build_smaller():
     )
 
 
+def test_bitmap_heap_lossy_fields_parsed():
+    """
+    Bitmap Heap Scan with lossy pages: rows_removed_by_recheck, exact_heap_blocks,
+    and lossy_heap_blocks must be captured on PlanNode, and recheck_waste_ratio
+    must compute rows_removed / (actual_rows + rows_removed).
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Recheck Cond": "(amount > 10000)",
+            "Rows Removed by Index Recheck": 8700,
+            "Exact Heap Blocks": 7,
+            "Lossy Heap Blocks": 50,
+            "Plan Rows": 1000,
+            "Actual Rows": 1300,
+            "Total Cost": 2500.0,
+            "Actual Total Time": 320.0,
+            "Plans": [{
+                "Node Type": "Bitmap Index Scan",
+                "Index Name": "idx_transactions_amount",
+                "Plan Rows": 1000,
+                "Actual Rows": 0,
+                "Total Cost": 50.0,
+                "Actual Total Time": 12.0,
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 320.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    node = plan.root
+    assert node.rows_removed_by_recheck == 8700, (
+        f"expected rows_removed_by_recheck=8700, got {node.rows_removed_by_recheck!r}"
+    )
+    assert node.exact_heap_blocks == 7, (
+        f"expected exact_heap_blocks=7, got {node.exact_heap_blocks!r}"
+    )
+    assert node.lossy_heap_blocks == 50, (
+        f"expected lossy_heap_blocks=50, got {node.lossy_heap_blocks!r}"
+    )
+    expected_ratio = 8700 / (1300 + 8700)
+    assert abs(node.recheck_waste_ratio - expected_ratio) < 1e-9, (
+        f"expected recheck_waste_ratio={expected_ratio:.4f}, got {node.recheck_waste_ratio:.4f}"
+    )
+
+
+def test_bitmap_heap_lossy_fires_on_high_waste():
+    """
+    Bitmap Heap Scan: actual_rows=1300, rows_removed_by_recheck=8700 →
+    recheck_waste_ratio = 8700/10000 = 0.87 (real-world measured value).
+    bitmap_heap_lossy must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Recheck Cond": "(amount > 10000)",
+            "Rows Removed by Index Recheck": 8700,
+            "Exact Heap Blocks": 7,
+            "Lossy Heap Blocks": 50,
+            "Plan Rows": 1000,
+            "Actual Rows": 1300,
+            "Total Cost": 2500.0,
+            "Actual Total Time": 320.0,
+            "Plans": [{
+                "Node Type": "Bitmap Index Scan",
+                "Index Name": "idx_transactions_amount",
+                "Plan Rows": 1000,
+                "Actual Rows": 0,
+                "Total Cost": 50.0,
+                "Actual Total Time": 12.0,
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 320.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "bitmap_heap_lossy" in names, (
+        f"expected bitmap_heap_lossy (ratio=0.87), got {names}"
+    )
+
+
+def test_no_false_positive_bitmap_heap_exact_only():
+    """
+    Bitmap Heap Scan with all-exact blocks and zero rows removed by recheck —
+    bitmap fits in work_mem, no lossy pages. bitmap_heap_lossy must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Recheck Cond": "(amount > 10000)",
+            "Rows Removed by Index Recheck": 0,
+            "Exact Heap Blocks": 55,
+            "Lossy Heap Blocks": 0,
+            "Plan Rows": 1000,
+            "Actual Rows": 1300,
+            "Total Cost": 800.0,
+            "Actual Total Time": 45.0,
+            "Plans": [{
+                "Node Type": "Bitmap Index Scan",
+                "Index Name": "idx_transactions_amount",
+                "Plan Rows": 1000,
+                "Actual Rows": 0,
+                "Total Cost": 50.0,
+                "Actual Total Time": 12.0,
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 45.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "bitmap_heap_lossy" not in names, (
+        f"all-exact bitmap (ratio=0.0) should not fire, got {names}"
+    )
+
+
+def test_join_condition_function_wrap_nested_loop():
+    """
+    Nested Loop where the inner Index Scan's Index Cond has LOWER() on the join
+    key — the join condition is on the inner child (children[1].index_condition),
+    not on the Nested Loop node itself. join_condition_function_wrap must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 500,
+            "Actual Rows": 480,
+            "Total Cost": 12000.0,
+            "Actual Total Time": 280.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Scan",
+                    "Relation Name": "merchants",
+                    "Index Name": "idx_merchants_name",
+                    "Index Cond": "(lower(name) = lower(transactions.merchant_name))",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 2.0,
+                    "Actual Total Time": 0.04,
+                    "Actual Loops": 5000,
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 280.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "join_condition_function_wrap" in names, (
+        f"expected join_condition_function_wrap (LOWER in inner Index Cond), got {names}"
+    )
+
+
+def test_no_false_positive_nested_loop_plain_index_cond():
+    """
+    Nested Loop where the inner Index Scan's Index Cond is a plain column
+    equality — no function wrap. join_condition_function_wrap must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 500,
+            "Actual Rows": 500,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 80.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Scan",
+                    "Relation Name": "accounts",
+                    "Index Name": "accounts_pkey",
+                    "Index Cond": "(id = transactions.account_id)",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 0.8,
+                    "Actual Total Time": 0.005,
+                    "Actual Loops": 5000,
+                },
+            ],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 80.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "join_condition_function_wrap" not in names, (
+        f"plain column Index Cond in NL should not fire, got {names}"
+    )
+
+
 def test_function_scan_bad_estimate():
     """
     Function Scan where the planner guessed 1000 rows (PostgreSQL's flat

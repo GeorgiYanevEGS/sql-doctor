@@ -144,10 +144,16 @@ class Skill:
             return False
 
         if "condition_pattern" in rules:
-            haystack = " ".join(
-                filter(None, [node.filter_condition, node.index_condition,
-                               node.hash_cond, node.merge_cond])
-            )
+            parts = [node.filter_condition, node.index_condition,
+                     node.hash_cond, node.merge_cond]
+            # For Nested Loop, PostgreSQL has no parent-level join field: the
+            # effective join condition appears as Index Cond / Filter on the inner
+            # child (children[1]). Extend the haystack with the inner child's
+            # conditions so skills can detect function wraps on NL join keys.
+            if node.node_type == "Nested Loop" and len(node.children) > 1:
+                inner = node.children[1]
+                parts.extend([inner.index_condition, inner.filter_condition])
+            haystack = " ".join(filter(None, parts))
             if not haystack:
                 return False
             if not re.search(rules["condition_pattern"], haystack, re.IGNORECASE):
@@ -233,6 +239,15 @@ class Skill:
             if probe_rows <= 0:
                 return False
             if (build_rows / probe_rows) < rules["build_probe_ratio_min"]:
+                return False
+
+        # Bitmap Heap Scan lossy-page waste: when work_mem can't hold the exact
+        # bitmap, PostgreSQL falls back to lossy page-level tracking; every row on
+        # a lossy page must be rechecked, wasting the heap fetch if it doesn't
+        # satisfy the condition. recheck_waste_ratio = removed / (actual + removed),
+        # bounded 0–1. Guard on denominator via the property itself (returns 0.0).
+        if "min_recheck_waste_ratio" in rules:
+            if node.recheck_waste_ratio < rules["min_recheck_waste_ratio"]:
                 return False
 
         # Parallel worker shortfall: workers_launched < workers_planned means the

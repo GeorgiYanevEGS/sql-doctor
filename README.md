@@ -100,7 +100,8 @@ sql-doctor/
 │   ├── repeated_index_scan_in_loop.yaml
 │   ├── join_condition_function_wrap.yaml
 │   ├── hash_join_build_probe_imbalance.yaml
-│   └── function_scan_bad_estimate.yaml
+│   ├── function_scan_bad_estimate.yaml
+│   └── bitmap_heap_lossy.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -114,7 +115,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 92 tests
+python -m pytest tests/ -v         # runs all 99 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -134,16 +135,16 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 15 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 16 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
-join-condition-, build-probe-imbalance-, and function-scan-cardinality-awareness),
-provider abstraction (3 backends), schema introspection, validator, coverage ledger,
-CLI wiring, 92 tests:
+join-condition-, build-probe-imbalance-, function-scan-cardinality-, and
+bitmap-lossy-page-awareness), provider abstraction (3 backends), schema
+introspection, validator, coverage ledger, CLI wiring, 99 tests:
 
-- **47 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **52 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **26 negative tests** — each proves a specific (skill, node type) pair
+- **28 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself

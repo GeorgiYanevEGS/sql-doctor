@@ -1,5 +1,9 @@
 [
   {
+    "skill_name": "bitmap_heap_lossy",
+    "node_type": "Bitmap Heap Scan"
+  },
+  {
     "skill_name": "empty_result_bad_estimate",
     "node_type": "Hash"
   },
@@ -46,6 +50,10 @@
   {
     "skill_name": "join_condition_function_wrap",
     "node_type": "Merge Join"
+  },
+  {
+    "skill_name": "join_condition_function_wrap",
+    "node_type": "Nested Loop"
   },
   {
     "skill_name": "missing_index",

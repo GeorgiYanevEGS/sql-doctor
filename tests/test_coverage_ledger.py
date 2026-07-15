@@ -1102,6 +1102,94 @@ def test_negative_sort_spill_to_disk_in_memory():
 # ---------------------------------------------------------------------------
 
 
+def test_negative_bitmap_heap_lossy_exact_blocks_only():
+    """
+    Bitmap Heap Scan with all-exact blocks (Lossy Heap Blocks=0,
+    Rows Removed by Index Recheck=0) — bitmap fit in work_mem, no wasted reads.
+    bitmap_heap_lossy must not fire.
+    Registers (bitmap_heap_lossy, Bitmap Heap Scan) in the ledger.
+    """
+    assert_no_match(
+        "bitmap_heap_lossy",
+        "Bitmap Heap Scan",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Bitmap Heap Scan",
+                    "Relation Name": "transactions",
+                    "Recheck Cond": "(amount > 10000)",
+                    "Rows Removed by Index Recheck": 0,
+                    "Exact Heap Blocks": 55,
+                    "Lossy Heap Blocks": 0,
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1300,
+                    "Total Cost": 800.0,
+                    "Actual Total Time": 45.0,
+                    "Plans": [{
+                        "Node Type": "Bitmap Index Scan",
+                        "Index Name": "idx_transactions_amount",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 0,
+                        "Total Cost": 50.0,
+                        "Actual Total Time": 12.0,
+                    }],
+                },
+                "Planning Time": 0.4,
+                "Execution Time": 45.4,
+            }
+        ],
+        SKILLS,
+    )
+
+
+def test_negative_join_condition_function_wrap_nested_loop_plain():
+    """
+    Nested Loop where the inner Index Scan's Index Cond is a plain column
+    equality — no function wrap. join_condition_function_wrap must not fire.
+    Registers (join_condition_function_wrap, Nested Loop) in the ledger.
+    """
+    assert_no_match(
+        "join_condition_function_wrap",
+        "Nested Loop",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Nested Loop",
+                    "Plan Rows": 500,
+                    "Actual Rows": 500,
+                    "Total Cost": 5000.0,
+                    "Actual Total Time": 80.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 5000,
+                            "Actual Rows": 5000,
+                            "Total Cost": 500.0,
+                            "Actual Total Time": 50.0,
+                            "Actual Loops": 1,
+                        },
+                        {
+                            "Node Type": "Index Scan",
+                            "Relation Name": "accounts",
+                            "Index Name": "accounts_pkey",
+                            "Index Cond": "(id = transactions.account_id)",
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 0.8,
+                            "Actual Total Time": 0.005,
+                            "Actual Loops": 5000,
+                        },
+                    ],
+                },
+                "Planning Time": 0.2,
+                "Execution Time": 80.2,
+            }
+        ],
+        SKILLS,
+    )
+
+
 def test_negative_function_scan_bad_estimate_accurate_estimate():
     """
     Function Scan where plan_rows ≈ actual_rows (ratio ~1.06x — well below
