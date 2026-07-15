@@ -1,0 +1,32 @@
+name: cte_scan_single_ref
+covers_node_types: ["CTE Scan"]
+detects:
+  node_type: "CTE Scan"
+  max_cte_reference_count: 1
+  min_actual_rows: 10000
+severity: medium
+explanation: >
+  A CTE (WITH clause subquery) was materialized and scanned exactly once,
+  reading at least 10,000 rows from the intermediate result. PostgreSQL 12+
+  inlines non-recursive, side-effect-free CTEs referenced exactly once by
+  default — the presence of a CTE Scan in the plan means the planner chose
+  to materialize instead of inline, adding the cost of writing the full result
+  to a tuplestore and then reading it back. Common causes: the CTE body
+  contains side effects (INSERT/UPDATE/DELETE RETURNING), an explicit
+  MATERIALIZED keyword, or a query structure that prevented inlining.
+fix_template: >
+  1. Check whether the CTE body contains side effects (INSERT, UPDATE, DELETE
+     ... RETURNING). If so, materialization is required — this finding can be
+     ignored.
+
+  2. If materialization is explicit, remove the keyword:
+       -- Before: WITH cte AS MATERIALIZED (SELECT ...)
+       -- After:  WITH cte AS (SELECT ...)
+
+  3. If neither applies, rewrite the CTE as an inline subquery or join. In
+     PostgreSQL 12+ the planner will fold it automatically, and may choose a
+     better access path when it can evaluate the full query shape together.
+
+  Known limitation: when a local Filter on the CTE Scan reduces the apparent
+  row count below the materialized volume, actual_rows may undercount the true
+  cost of materialization. Verify by inspecting the CTE's source plan node.

@@ -8,6 +8,10 @@
     "node_type": "BitmapOr"
   },
   {
+    "skill_name": "cte_scan_single_ref",
+    "node_type": "CTE Scan"
+  },
+  {
     "skill_name": "empty_result_bad_estimate",
     "node_type": "Hash"
   },

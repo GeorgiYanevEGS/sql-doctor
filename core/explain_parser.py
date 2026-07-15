@@ -67,6 +67,11 @@ class PlanNode:
     # Append / MergeAppend only: number of child subplans that runtime partition pruning
     # eliminated before execution. 0 means no pruning occurred despite filter conditions.
     subplans_removed: int | None = None
+    # CTE Scan / WorkTable Scan only: name of the CTE being scanned. cte_reference_count
+    # is populated by a post-parse annotation pass (_annotate_cte_counts) that counts how
+    # many CTE Scan nodes (not WorkTable Scan) reference the same CTE name in the plan.
+    cte_name: str | None = None
+    cte_reference_count: int = 0
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -154,10 +159,27 @@ def _parse_node(raw: dict) -> PlanNode:
         disk_usage_kb=int(raw["Disk Usage"]) if "Disk Usage" in raw else None,
         parent_relationship=raw.get("Parent Relationship"),
         subplans_removed=int(raw["Subplans Removed"]) if "Subplans Removed" in raw else None,
+        cte_name=raw.get("CTE Name"),
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))
     return node
+
+
+def _annotate_cte_counts(plan: ParsedPlan) -> None:
+    """
+    Walk the plan once, count how many CTE Scan nodes reference each CTE name,
+    then attach that count to every CTE Scan node. WorkTable Scan nodes (which
+    share the same 'CTE Name' key but are part of the recursive definition, not
+    a consumer reference) are excluded from the tally entirely.
+    """
+    counts: dict[str, int] = {}
+    for node in plan.all_nodes():
+        if node.node_type == "CTE Scan" and node.cte_name:
+            counts[node.cte_name] = counts.get(node.cte_name, 0) + 1
+    for node in plan.all_nodes():
+        if node.node_type == "CTE Scan" and node.cte_name:
+            node.cte_reference_count = counts[node.cte_name]
 
 
 def parse_explain_json(explain_output: list | dict) -> ParsedPlan:
@@ -172,8 +194,10 @@ def parse_explain_json(explain_output: list | dict) -> ParsedPlan:
         payload = explain_output
 
     root = _parse_node(payload["Plan"])
-    return ParsedPlan(
+    plan = ParsedPlan(
         root=root,
         execution_time_ms=float(payload.get("Execution Time", 0)),
         planning_time_ms=float(payload.get("Planning Time", 0)),
     )
+    _annotate_cte_counts(plan)
+    return plan

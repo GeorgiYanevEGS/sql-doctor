@@ -303,6 +303,17 @@ def _evaluate_rules(
     if "min_actual_rows" in rules and node.actual_rows < rules["min_actual_rows"]:
         return False
 
+    # CTE reference count gate: fire only when this CTE Scan is the sole consumer
+    # of its materialized result (cte_reference_count == 1). A count of 0 means the
+    # annotation didn't run or the CTE name is missing — fail safe, don't fire.
+    # WorkTable Scan nodes are excluded from the count (see _annotate_cte_counts),
+    # so recursive CTEs still produce reference_count == 1 on the outer CTE Scan.
+    if "max_cte_reference_count" in rules:
+        if node.cte_reference_count <= 0:
+            return False
+        if node.cte_reference_count > rules["max_cte_reference_count"]:
+            return False
+
     if "min_actual_loops" in rules and node.actual_loops < rules["min_actual_loops"]:
         return False
 

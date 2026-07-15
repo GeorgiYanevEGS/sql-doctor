@@ -112,7 +112,8 @@ sql-doctor/
 │   ├── bitmap_or_missing_index_branch.yaml
 │   ├── modify_table_seq_scan.yaml
 │   ├── append_partition_pruning_failure.yaml
-│   └── unique_sort_noop.yaml
+│   ├── unique_sort_noop.yaml
+│   └── cte_scan_single_ref.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -146,7 +147,7 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 28 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 29 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
 join-condition-, build-probe-imbalance-, function-scan-cardinality-,
 bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
@@ -154,15 +155,15 @@ correlated-subplan-awareness, sort-expression-awareness,
 unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness,
 bitmap-or-branch-awareness, schema-verified-redundant-sort-awareness,
-modify-table-unindexed-scan-awareness, partition-pruning-failure-awareness, and
-unique-sort-noop-awareness),
+modify-table-unindexed-scan-awareness, partition-pruning-failure-awareness,
+unique-sort-noop-awareness, and cte-scan-single-reference-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 165 tests:
+ledger, CLI wiring, 171 tests:
 
-- **103 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **108 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **37 negative tests** — each proves a specific (skill, node type) pair
+- **38 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
@@ -239,6 +240,12 @@ What's next (not yet done):
   the regex or switching to a general "any expression that isn't a plain column
   reference" heuristic is the fix, but both carry higher false-positive risk and
   are deferred.
+
+- **`cte_scan_single_ref` fires on recursive CTEs** whose outer CTE Scan is a single
+  reference reading many rows — materialization is semantically required for recursive
+  CTEs but structurally indistinguishable from a wasteful single-reference case when
+  only the plan is available. Verify with `WITH RECURSIVE` keyword in the query text
+  before treating the finding as actionable.
 
 - **`unique_sort_noop` suppresses `SELECT DISTINCT col FROM (a UNION ALL b) sub`**
   (outer DISTINCT on a subquery-wrapped UNION ALL) because the Sort→Append shape is

@@ -2442,6 +2442,71 @@ def test_parse_subplans_removed():
     assert append_node.subplans_removed is not None
 
 
+def test_parse_cte_fields():
+    """
+    CTE Scan node: cte_name is parsed from 'CTE Name', cte_reference_count is
+    populated by the post-parse annotation pass. Two CTE Scan nodes sharing a name
+    both get reference_count == 2; a WorkTable Scan sharing the name is excluded.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 100,
+            "Actual Rows": 100,
+            "Total Cost": 600.0,
+            "Actual Total Time": 55.0,
+            "Plans": [
+                {
+                    "Node Type": "CTE Scan",
+                    "CTE Name": "my_cte",
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 300.0,
+                    "Actual Total Time": 30.0,
+                },
+                {
+                    "Node Type": "CTE Scan",
+                    "CTE Name": "my_cte",
+                    "Parent Relationship": "Inner",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 300.0,
+                    "Actual Total Time": 25.0,
+                    "Plans": [{
+                        "Node Type": "WorkTable Scan",
+                        "CTE Name": "my_cte",
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 1,
+                        "Actual Rows": 1,
+                        "Total Cost": 1.0,
+                        "Actual Total Time": 0.1,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 55.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    nl = plan.root
+    cte_a, cte_b = nl.children[0], nl.children[1]
+    worktable = cte_b.children[0]
+
+    assert cte_a.cte_name == "my_cte", f"expected cte_name='my_cte', got {cte_a.cte_name!r}"
+    assert cte_b.cte_name == "my_cte", f"expected cte_name='my_cte', got {cte_b.cte_name!r}"
+    assert worktable.cte_name == "my_cte", f"expected worktable cte_name='my_cte', got {worktable.cte_name!r}"
+    assert cte_a.cte_reference_count == 2, (
+        f"two CTE Scans with same name → each should have cte_reference_count=2, got {cte_a.cte_reference_count}"
+    )
+    assert cte_b.cte_reference_count == 2, (
+        f"two CTE Scans with same name → each should have cte_reference_count=2, got {cte_b.cte_reference_count}"
+    )
+    assert worktable.cte_reference_count == 0, (
+        f"WorkTable Scan must not be counted — expected cte_reference_count=0, got {worktable.cte_reference_count}"
+    )
+
+
 def test_hash_aggregate_disk_spill():
     """
     Aggregate (Strategy=Hashed) with Disk Usage=8192 KB — hash table exceeded
@@ -4110,6 +4175,123 @@ def test_no_false_positive_unique_sort_noop_merge_join_inner():
     names = {m.skill_name for m in result.matches}
     assert "unique_sort_noop" not in names, (
         f"Unique with parent_relationship='Inner' is Merge Join inner side — must not fire, got {names}"
+    )
+
+
+def _cte_scan_plan(
+    cte_name: str,
+    actual_rows: int,
+    second_ref: bool = False,
+    include_worktable: bool = False,
+) -> list:
+    """Build a plan with one or two CTE Scan nodes plus an optional WorkTable Scan sibling."""
+    cte_node = {
+        "Node Type": "CTE Scan",
+        "CTE Name": cte_name,
+        "Plan Rows": actual_rows,
+        "Actual Rows": actual_rows,
+        "Total Cost": 500.0,
+        "Actual Total Time": 45.0,
+    }
+    if include_worktable:
+        cte_node["Plans"] = [{
+            "Node Type": "WorkTable Scan",
+            "CTE Name": cte_name,
+            "Parent Relationship": "Inner",
+            "Plan Rows": actual_rows,
+            "Actual Rows": actual_rows,
+            "Total Cost": 100.0,
+            "Actual Total Time": 10.0,
+        }]
+    if not second_ref and not include_worktable:
+        return [{"Plan": cte_node, "Planning Time": 0.5, "Execution Time": 45.5}]
+    plans = [cte_node]
+    if second_ref:
+        plans.append({
+            "Node Type": "CTE Scan",
+            "CTE Name": cte_name,
+            "Parent Relationship": "Inner",
+            "Plan Rows": actual_rows,
+            "Actual Rows": actual_rows,
+            "Total Cost": 500.0,
+            "Actual Total Time": 45.0,
+        })
+    return [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": actual_rows,
+            "Actual Rows": actual_rows,
+            "Total Cost": 1000.0,
+            "Actual Total Time": 90.0,
+            "Plans": plans,
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 90.5,
+    }]
+
+
+def test_cte_scan_single_ref():
+    """
+    Single-reference CTE Scan reading 15,000 rows — cte_reference_count == 1
+    and min_actual_rows == 10,000 both satisfied. Must fire.
+    """
+    plan = parse_explain_json(_cte_scan_plan("expensive_cte", actual_rows=15000))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "cte_scan_single_ref" in names, (
+        f"expected cte_scan_single_ref for single-reference large CTE Scan, got {names}"
+    )
+
+
+def test_no_false_positive_cte_scan_two_references():
+    """
+    Two CTE Scan nodes sharing the same CTE name — cte_reference_count == 2,
+    exceeds max_cte_reference_count: 1. Neither must fire.
+    """
+    plan = parse_explain_json(
+        _cte_scan_plan("shared_cte", actual_rows=15000, second_ref=True)
+    )
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "cte_scan_single_ref" not in names, (
+        f"two references means materialization is intentional — must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_cte_scan_small_rows():
+    """
+    Single-reference CTE Scan reading only 500 rows — below min_actual_rows: 10000.
+    Must NOT fire.
+    """
+    plan = parse_explain_json(_cte_scan_plan("tiny_cte", actual_rows=500))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "cte_scan_single_ref" not in names, (
+        f"only 500 rows — below threshold, must not fire, got {names}"
+    )
+
+
+def test_cte_scan_with_worktable_sibling():
+    """
+    CTE Scan (single reference, 15k rows) with a WorkTable Scan child sharing the same
+    CTE name. The WorkTable Scan must be excluded from the reference count so the outer
+    CTE Scan still gets cte_reference_count == 1 and fires. The WorkTable Scan itself
+    must never fire (gated by node_type: 'CTE Scan' in the skill detects).
+    """
+    plan = parse_explain_json(
+        _cte_scan_plan("counter", actual_rows=15000, include_worktable=True)
+    )
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "cte_scan_single_ref" in names, (
+        f"WorkTable Scan must not inflate ref count — outer CTE Scan should still fire, got {names}"
+    )
+    # Verify the WorkTable Scan node itself is not in the matches
+    matched_node_types = {
+        m.matched_node.node_type for m in result.matches if m.matched_node is not None
+    }
+    assert "WorkTable Scan" not in matched_node_types, (
+        f"WorkTable Scan must never match cte_scan_single_ref, got matched types {matched_node_types}"
     )
 
 

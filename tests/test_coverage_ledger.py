@@ -1568,6 +1568,50 @@ def test_negative_modify_table_seq_scan_index_child():
     )
 
 
+def test_negative_cte_scan_single_ref_two_references():
+    """
+    Two CTE Scan nodes sharing the same name — cte_reference_count == 2,
+    exceeds max_cte_reference_count: 1 so cte_scan_single_ref must not fire.
+    Registers (cte_scan_single_ref, CTE Scan) in the ledger.
+    """
+    assert_no_match(
+        "cte_scan_single_ref",
+        "CTE Scan",
+        [{
+            "Plan": {
+                "Node Type": "Nested Loop",
+                "Plan Rows": 15000,
+                "Actual Rows": 15000,
+                "Total Cost": 1000.0,
+                "Actual Total Time": 90.0,
+                "Plans": [
+                    {
+                        "Node Type": "CTE Scan",
+                        "CTE Name": "shared_cte",
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 15000,
+                        "Actual Rows": 15000,
+                        "Total Cost": 300.0,
+                        "Actual Total Time": 30.0,
+                    },
+                    {
+                        "Node Type": "CTE Scan",
+                        "CTE Name": "shared_cte",
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 15000,
+                        "Actual Rows": 15000,
+                        "Total Cost": 300.0,
+                        "Actual Total Time": 30.0,
+                    },
+                ],
+            },
+            "Planning Time": 0.5,
+            "Execution Time": 90.5,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_unique_sort_noop_low_dedup_ratio():
     """
     Unique over Sort where dedup removes 80% of rows (ratio 0.2 < 0.9 threshold)
