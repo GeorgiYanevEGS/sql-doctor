@@ -4295,6 +4295,93 @@ def test_cte_scan_with_worktable_sibling():
     )
 
 
+def _window_agg_plan(sort_actual_rows: int, use_index_scan: bool = False) -> list:
+    """Build a minimal WindowAgg → Sort|IndexScan → [scan] EXPLAIN fixture."""
+    if use_index_scan:
+        child = {
+            "Node Type": "Index Scan",
+            "Relation Name": "transactions",
+            "Index Name": "idx_transactions_account_id_txn_date",
+            "Index Cond": "(account_id IS NOT NULL)",
+            "Plan Rows": sort_actual_rows,
+            "Actual Rows": sort_actual_rows,
+            "Total Cost": 2000.0,
+            "Actual Total Time": 80.0,
+        }
+    else:
+        child = {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id", "txn_date"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 8192,
+            "Sort Space Type": "Memory",
+            "Plan Rows": sort_actual_rows,
+            "Actual Rows": sort_actual_rows,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": sort_actual_rows,
+                "Actual Rows": sort_actual_rows,
+                "Total Cost": 4000.0,
+                "Actual Total Time": 300.0,
+            }],
+        }
+    return [{
+        "Plan": {
+            "Node Type": "WindowAgg",
+            "Plan Rows": sort_actual_rows,
+            "Actual Rows": sort_actual_rows,
+            "Total Cost": 10000.0,
+            "Actual Total Time": 800.0,
+            "Plans": [child],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 800.5,
+    }]
+
+
+def test_window_agg_sort():
+    """
+    WindowAgg → Sort → Seq Scan with Sort.actual_rows = 50,000 — must fire.
+    Represents running totals per account over a large transactions table.
+    """
+    plan = parse_explain_json(_window_agg_plan(sort_actual_rows=50000))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "window_agg_sort" in names, (
+        f"expected window_agg_sort for WindowAgg→Sort with 50000 rows, got {names}"
+    )
+
+
+def test_no_false_positive_window_agg_sort_index_scan_child():
+    """
+    WindowAgg → Index Scan (no Sort) — planner used an ordered index to provide
+    the window's order; no explicit sort needed. child_node_type: ["Sort"] gate
+    must block the skill even though Sort.actual_rows would be large.
+    """
+    plan = parse_explain_json(_window_agg_plan(sort_actual_rows=50000, use_index_scan=True))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "window_agg_sort" not in names, (
+        f"WindowAgg with Index Scan child skipped the sort — must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_window_agg_sort_small_rows():
+    """
+    WindowAgg → Sort → Seq Scan with only 500 rows in Sort — below
+    child_min_actual_rows threshold of 10,000. Must NOT fire.
+    """
+    plan = parse_explain_json(_window_agg_plan(sort_actual_rows=500))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "window_agg_sort" not in names, (
+        f"only 500 rows sorted — below threshold, must not fire, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

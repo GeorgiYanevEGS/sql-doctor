@@ -1,0 +1,41 @@
+name: window_agg_sort
+covers_node_types: ["WindowAgg"]
+detects:
+  node_type: "WindowAgg"
+  child_node_type: ["Sort"]
+  child_min_actual_rows: 10000
+severity: medium
+explanation: >
+  A window function (OVER clause) sorted 10,000+ rows to produce the required
+  partition/order — the planner found no index that already provides the window's
+  ordering and had to perform a full in-memory or on-disk sort. The sort step
+  scales as O(n log n) with input volume. If the window's PARTITION BY and ORDER BY
+  columns together form a leading prefix of a composite index, the planner can read
+  rows in the required order directly from the index and skip this sort entirely.
+fix_template: >
+  1. Check whether an index covering the window's PARTITION BY and ORDER BY columns
+     (in that order) already exists:
+       SELECT indexname, indexdef
+       FROM pg_indexes
+       WHERE tablename = '<base_table>';
+     For SUM(amount) OVER (PARTITION BY account_id ORDER BY txn_date), look for
+     an index on (account_id, txn_date) in that column order.
+
+  2. If no such index exists and this query runs frequently:
+       CREATE INDEX ON transactions (account_id, txn_date);
+
+  3. If the window must aggregate across all rows of the table (no WHERE clause
+     restricts which rows participate), an index may eliminate the explicit Sort
+     node but cannot reduce the row volume processed — the sort cost is lowered
+     but not removed. Verify whether the sort elimination justifies the index
+     maintenance cost before adding it.
+
+  Note: if sort_spill_to_disk also fired on this plan, the Sort's disk spill
+  and this window sort share the same work_mem root cause — increasing work_mem
+  may address both simultaneously before adding an index.
+
+  Known limitation: this skill has been validated against synthetic EXPLAIN JSON
+  fixtures only. The WindowAgg node shape is based on documented PostgreSQL plan
+  structure but has not been confirmed against a real server running a window
+  function query. Treat findings as a high-confidence hypothesis to verify against
+  live EXPLAIN output before acting.

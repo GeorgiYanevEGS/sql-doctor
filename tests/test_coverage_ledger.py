@@ -1686,3 +1686,39 @@ def test_negative_sort_expression_no_index_plain_sort():
         }],
         SKILLS,
     )
+
+
+def test_negative_window_agg_sort_index_scan_child():
+    """
+    WindowAgg → Index Scan — planner provided window order via an ordered index,
+    skipping the sort entirely. child_node_type: ["Sort"] gate must block the skill.
+    Registers (window_agg_sort, WindowAgg) in the ledger.
+    Chosen over 'small Sort child' because it proves the shape gate works (the
+    sort was avoided), not just the numeric threshold.
+    """
+    assert_no_match(
+        "window_agg_sort",
+        "WindowAgg",
+        [{
+            "Plan": {
+                "Node Type": "WindowAgg",
+                "Plan Rows": 50000,
+                "Actual Rows": 50000,
+                "Total Cost": 6000.0,
+                "Actual Total Time": 400.0,
+                "Plans": [{
+                    "Node Type": "Index Scan",
+                    "Relation Name": "transactions",
+                    "Index Name": "idx_transactions_account_id_txn_date",
+                    "Index Cond": "(account_id IS NOT NULL)",
+                    "Plan Rows": 50000,
+                    "Actual Rows": 50000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 100.0,
+                }],
+            },
+            "Planning Time": 0.5,
+            "Execution Time": 400.5,
+        }],
+        SKILLS,
+    )

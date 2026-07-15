@@ -113,7 +113,8 @@ sql-doctor/
 │   ├── modify_table_seq_scan.yaml
 │   ├── append_partition_pruning_failure.yaml
 │   ├── unique_sort_noop.yaml
-│   └── cte_scan_single_ref.yaml
+│   ├── cte_scan_single_ref.yaml
+│   └── window_agg_sort.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -147,7 +148,7 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 29 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 30 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
 join-condition-, build-probe-imbalance-, function-scan-cardinality-,
 bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
@@ -156,14 +157,15 @@ unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness,
 bitmap-or-branch-awareness, schema-verified-redundant-sort-awareness,
 modify-table-unindexed-scan-awareness, partition-pruning-failure-awareness,
-unique-sort-noop-awareness, and cte-scan-single-reference-awareness),
+unique-sort-noop-awareness, cte-scan-single-reference-awareness, and
+window-agg-sort-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 171 tests:
+ledger, CLI wiring, 175 tests:
 
-- **108 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **111 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **38 negative tests** — each proves a specific (skill, node type) pair
+- **39 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
