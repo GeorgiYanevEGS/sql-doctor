@@ -122,5 +122,9 @@
   {
     "skill_name": "stale_statistics",
     "node_type": "Sort"
+  },
+  {
+    "skill_name": "unique_without_index",
+    "node_type": "Unique"
   }
 ]

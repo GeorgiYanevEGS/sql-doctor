@@ -1,0 +1,36 @@
+name: unique_without_index
+covers_node_types: ["Unique"]
+detects:
+  node_type: "Unique"
+  child_node_type: ["Sort"]
+  child_min_actual_rows: 1000
+severity: medium
+explanation: >
+  A DISTINCT operation required an explicit Sort on a large input — the Unique
+  node's Sort child processed at least 1000 rows before collapsing them to
+  distinct values. This typically comes from SELECT DISTINCT or UNION without ALL
+  on a large table. When an index exists on the DISTINCT column(s), the planner
+  can use an Index Scan that returns values in sorted order, eliminating both the
+  Sort and the Unique pass entirely — deduplication becomes a streaming operation
+  rather than a full sort pass. This skill detects the shape only; verify whether
+  a usable index already exists before treating this as a confirmed missing-index
+  finding.
+fix_template: >
+  Verify whether an index exists on the column(s) in the DISTINCT clause:
+    SELECT indexname, indexdef FROM pg_indexes
+    WHERE tablename = '<table>'
+      AND indexdef LIKE '%<distinct_column>%';
+
+  If no index exists, adding one lets the planner use a sorted index scan and
+  skip the Sort + Unique step:
+    CREATE INDEX CONCURRENTLY idx_<table>_<distinct_column>
+      ON <table> (<distinct_column>);
+
+  Verify with EXPLAIN (ANALYZE) that the Sort + Unique pair is replaced by an
+  Index Scan (or Index Only Scan if the index is covering).
+
+  If an index already exists but the planner chose Sort + Unique anyway, check
+  whether SET enable_sort = off changes the plan — if so, this is a cost-model
+  decision rather than a missing index, and raising the statistics target
+  (ALTER TABLE <table> ALTER COLUMN <distinct_column> SET STATISTICS 500;
+  ANALYZE <table>;) may give the planner more accurate selectivity estimates.

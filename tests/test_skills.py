@@ -2241,6 +2241,86 @@ def test_sort_expression_no_index():
     )
 
 
+def test_unique_without_index():
+    """Unique → Sort with 500k rows in Sort child — large pre-dedup volume. Must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Unique",
+            "Plan Rows": 45000,
+            "Actual Rows": 45000,
+            "Total Cost": 10000.0,
+            "Actual Total Time": 800.0,
+            "Plans": [{
+                "Node Type": "Sort",
+                "Sort Key": ["account_id"],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 8192,
+                "Sort Space Type": "Memory",
+                "Plan Rows": 500000,
+                "Actual Rows": 500000,
+                "Total Cost": 9500.0,
+                "Actual Total Time": 750.0,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 500000,
+                    "Actual Rows": 500000,
+                    "Total Cost": 8000.0,
+                    "Actual Total Time": 600.0,
+                }],
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 800.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_without_index" in names, (
+        f"expected unique_without_index (Sort child 500k rows), got {names}"
+    )
+
+
+def test_no_false_positive_unique_small_input():
+    """Unique → Sort with only 12 rows in Sort child — below 1000 threshold, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Unique",
+            "Plan Rows": 10,
+            "Actual Rows": 10,
+            "Total Cost": 5.0,
+            "Actual Total Time": 0.1,
+            "Plans": [{
+                "Node Type": "Sort",
+                "Sort Key": ["status"],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 2,
+                "Sort Space Type": "Memory",
+                "Plan Rows": 12,
+                "Actual Rows": 12,
+                "Total Cost": 4.0,
+                "Actual Total Time": 0.08,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "txn_statuses",
+                    "Plan Rows": 12,
+                    "Actual Rows": 12,
+                    "Total Cost": 1.0,
+                    "Actual Total Time": 0.02,
+                }],
+            }],
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 0.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_without_index" not in names, (
+        f"Sort child with only 12 rows should not fire unique_without_index, got {names}"
+    )
+
+
 def test_no_false_positive_sort_plain_column():
     """Sort node with plain column sort key — no function wrap, must not fire."""
     explain_json = [{

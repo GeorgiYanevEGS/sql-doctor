@@ -1285,6 +1285,49 @@ def test_negative_function_scan_bad_estimate_accurate_estimate():
     )
 
 
+def test_negative_unique_without_index_small_sort():
+    """
+    Unique → Sort with only 12 rows in the Sort child — below the 1000-row threshold.
+    unique_without_index must not fire.
+    Registers (unique_without_index, Unique) in the ledger.
+    """
+    assert_no_match(
+        "unique_without_index",
+        "Unique",
+        [{
+            "Plan": {
+                "Node Type": "Unique",
+                "Plan Rows": 10,
+                "Actual Rows": 10,
+                "Total Cost": 5.0,
+                "Actual Total Time": 0.1,
+                "Plans": [{
+                    "Node Type": "Sort",
+                    "Sort Key": ["status"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 2,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 12,
+                    "Actual Rows": 12,
+                    "Total Cost": 4.0,
+                    "Actual Total Time": 0.08,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "txn_statuses",
+                        "Plan Rows": 12,
+                        "Actual Rows": 12,
+                        "Total Cost": 1.0,
+                        "Actual Total Time": 0.02,
+                    }],
+                }],
+            },
+            "Planning Time": 0.1,
+            "Execution Time": 0.2,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_sort_expression_no_index_plain_sort():
     """
     Sort with plain column sort key (no function call) — sort_expression_no_index

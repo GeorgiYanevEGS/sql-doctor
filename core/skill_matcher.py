@@ -234,6 +234,15 @@ class Skill:
             if matched_child is None:
                 return False
 
+        # Minimum actual_rows on the companion-predicate matched child (set by child_node_type).
+        # Evaluates the matched child's row count — the pre-dedup sort volume for
+        # unique_without_index rather than the parent Unique node's output row count.
+        if "child_min_actual_rows" in rules:
+            if matched_child is None:
+                return False
+            if matched_child.actual_rows < rules["child_min_actual_rows"]:
+                return False
+
         # Build/probe row count ratio: children[1] is the Hash node (build side),
         # children[0] is the probe side. A high ratio means the planner hashed the
         # larger relation, forcing a bigger in-memory (or spilled) hash table than
