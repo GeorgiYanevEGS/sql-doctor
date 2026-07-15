@@ -1,0 +1,31 @@
+name: sort_expression_no_index
+covers_node_types: ["Sort"]
+detects:
+  node_type: "Sort"
+  condition_pattern: "\\b(lower|upper|to_char|to_number|cast)\\s*\\("
+severity: medium
+explanation: >
+  The ORDER BY or GROUP BY clause applies a function call to the sort key —
+  for example ORDER BY LOWER(name) or ORDER BY date_trunc('month', created_at).
+  PostgreSQL cannot use a plain B-tree index to satisfy the sort order when
+  the key is a function expression, so it falls back to loading rows and sorting
+  them in memory (or to disk if the data volume exceeds work_mem). A functional
+  index on the same expression would let the planner use an Index Scan with
+  pre-sorted output, eliminating the Sort node entirely for queries that both
+  filter and sort on the same expression.
+fix_template: >
+  Create a functional index matching the sort expression so the planner can
+  return rows in the required order directly from the index:
+
+    -- If ordering by LOWER(name):
+    CREATE INDEX CONCURRENTLY idx_<table>_lower_name ON <table> (lower(name));
+
+    -- If ordering by a date truncation:
+    CREATE INDEX CONCURRENTLY idx_<table>_month ON <table> (date_trunc('month', created_at));
+
+  After adding the functional index, verify with EXPLAIN that the Sort node
+  disappears and is replaced by an Index Scan or Index Only Scan with the index
+  providing pre-sorted output. Note: functional indexes only help queries that
+  both filter and sort on the same expression — a query that only sorts (no WHERE
+  clause on the expression) will still use the index for ordering if the planner
+  deems it cheaper than a Seq Scan + Sort for the full table.

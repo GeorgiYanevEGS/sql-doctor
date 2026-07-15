@@ -96,6 +96,10 @@
     "node_type": "Seq Scan"
   },
   {
+    "skill_name": "sort_expression_no_index",
+    "node_type": "Sort"
+  },
+  {
     "skill_name": "sort_spill_to_disk",
     "node_type": "Sort"
   },

@@ -148,6 +148,8 @@ class Skill:
         if "condition_pattern" in rules:
             parts = [node.filter_condition, node.index_condition,
                      node.hash_cond, node.merge_cond]
+            if node.sort_key:
+                parts.append(" ".join(node.sort_key))
             # For Nested Loop, PostgreSQL has no parent-level join field: the
             # effective join condition appears as Index Cond / Filter on the inner
             # child (children[1]). Extend the haystack with the inner child's

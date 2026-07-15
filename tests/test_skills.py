@@ -2208,6 +2208,72 @@ def test_no_false_positive_hash_agg_no_spill():
     )
 
 
+def test_sort_expression_no_index():
+    """Sort node with LOWER() in sort key — function wrap prevents index use. Must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["lower(name)"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 512,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 3000.0,
+            "Actual Total Time": 250.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "merchants",
+                "Plan Rows": 50000,
+                "Actual Rows": 50000,
+                "Total Cost": 800.0,
+                "Actual Total Time": 100.0,
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 250.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "sort_expression_no_index" in names, (
+        f"expected sort_expression_no_index (LOWER in sort key), got {names}"
+    )
+
+
+def test_no_false_positive_sort_plain_column():
+    """Sort node with plain column sort key — no function wrap, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 256,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 2000.0,
+            "Actual Total Time": 120.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 5000,
+                "Actual Rows": 5000,
+                "Total Cost": 1000.0,
+                "Actual Total Time": 60.0,
+            }],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 120.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "sort_expression_no_index" not in names, (
+        f"plain column sort key should not fire sort_expression_no_index, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

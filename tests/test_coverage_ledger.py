@@ -1283,3 +1283,39 @@ def test_negative_function_scan_bad_estimate_accurate_estimate():
         ],
         SKILLS,
     )
+
+
+def test_negative_sort_expression_no_index_plain_sort():
+    """
+    Sort with plain column sort key (no function call) — sort_expression_no_index
+    must not fire.
+    Registers (sort_expression_no_index, Sort) in the ledger.
+    """
+    assert_no_match(
+        "sort_expression_no_index",
+        "Sort",
+        [{
+            "Plan": {
+                "Node Type": "Sort",
+                "Sort Key": ["account_id"],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 256,
+                "Sort Space Type": "Memory",
+                "Plan Rows": 5000,
+                "Actual Rows": 5000,
+                "Total Cost": 2000.0,
+                "Actual Total Time": 120.0,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 1000.0,
+                    "Actual Total Time": 60.0,
+                }],
+            },
+            "Planning Time": 0.2,
+            "Execution Time": 120.2,
+        }],
+        SKILLS,
+    )
