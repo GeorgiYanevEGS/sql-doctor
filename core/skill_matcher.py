@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from core.explain_parser import ParsedPlan, PlanNode
+from core.schema_introspect import TableSchema
 
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
@@ -119,8 +120,15 @@ class Skill:
             return True
         return node_type in self._verified_node_types
 
-    def matches_node(self, node: PlanNode, table_row_counts: dict[str, int] | None = None, *, execution_time_ms: float = 0.0) -> bool:
-        return _evaluate_rules(node, self.detects, table_row_counts, execution_time_ms)
+    def matches_node(
+        self,
+        node: PlanNode,
+        table_row_counts: dict[str, int] | None = None,
+        *,
+        execution_time_ms: float = 0.0,
+        schema_context: dict[str, TableSchema] | None = None,
+    ) -> bool:
+        return _evaluate_rules(node, self.detects, table_row_counts, execution_time_ms, schema_context)
 
     def matches_plan(self, plan: ParsedPlan) -> bool:
         """Evaluate plan-level detection rules (scope: plan skills only)."""
@@ -161,6 +169,7 @@ def _evaluate_rules(
     rules: dict,
     table_row_counts: dict[str, int] | None = None,
     execution_time_ms: float = 0.0,
+    schema_context: dict[str, TableSchema] | None = None,
 ) -> bool:
     """
     Evaluate a rules dict against a single plan node.
@@ -177,6 +186,15 @@ def _evaluate_rules(
             if node.node_type not in allowed:
                 return False
         elif node.node_type != allowed:
+            return False
+
+    # Schema-context gate: a skill declaring requires_schema_context: true opts in to
+    # schema-dependent evaluation. When schema_context is absent (offline mode, synthetic
+    # fixtures, or a DB connection not yet established), the skill abstains rather than
+    # false-positive-fire. Placed right after node_type so the cheap type gate runs first,
+    # then capability is verified before any more expensive predicate runs.
+    if rules.get("requires_schema_context"):
+        if schema_context is None:
             return False
 
     if "min_row_estimate_error_ratio" in rules or "max_row_estimate_error_ratio" in rules:
@@ -378,7 +396,7 @@ def _evaluate_rules(
     if "any_child" in rules:
         child_rules = rules["any_child"]
         if not any(
-            _evaluate_rules(c, child_rules, table_row_counts, execution_time_ms)
+            _evaluate_rules(c, child_rules, table_row_counts, execution_time_ms, schema_context)
             for c in node.children
         ):
             return False
@@ -453,6 +471,7 @@ def match_skills(
     table_row_counts: dict[str, int] | None = None,
     *,
     ledger_status: LedgerStatus,
+    schema_context: dict[str, TableSchema] | None = None,
 ) -> DiagnosisResult:
     matches: list[SkillMatch] = []
     ever_matched: set[str] = set()
@@ -478,7 +497,7 @@ def match_skills(
         for skill in skills:
             if skill.scope == "plan":
                 continue
-            if skill.matches_node(node, table_row_counts, execution_time_ms=plan.execution_time_ms):
+            if skill.matches_node(node, table_row_counts, execution_time_ms=plan.execution_time_ms, schema_context=schema_context):
                 matches.append(
                     SkillMatch(
                         skill_name=skill.name,

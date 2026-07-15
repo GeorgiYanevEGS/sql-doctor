@@ -10,7 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.explain_parser import parse_explain_json
-from core.skill_matcher import CoverageStatus, LedgerStatus, load_skills, match_skills
+from core.schema_introspect import TableSchema
+from core.skill_matcher import CoverageStatus, LedgerStatus, Skill, load_skills, match_skills
 
 _loaded = load_skills()
 SKILLS = _loaded.skills
@@ -2973,6 +2974,84 @@ def test_no_false_positive_sort_plain_column():
     names = {m.skill_name for m in result.matches}
     assert "sort_expression_no_index" not in names, (
         f"plain column sort key should not fire sort_expression_no_index, got {names}"
+    )
+
+
+def test_schema_context_abstain_when_none():
+    """
+    A skill declaring requires_schema_context: true must not fire when
+    schema_context is absent — even on a fixture that satisfies all other
+    detection predicates (node_type matches, no other guards). The
+    abstain-when-None contract must be explicit and tested, not assumed.
+    This is the property that makes schema-dependent skills safe to ship:
+    offline runs against synthetic fixtures silently skip rather than
+    false-positive-fire.
+    """
+    schema_skill = Skill(
+        name="test_schema_gate",
+        description="",
+        detects={"node_type": "Seq Scan", "requires_schema_context": True},
+        severity="medium",
+        explanation="",
+        fix_template="",
+        covers_node_types=["Seq Scan"],
+    )
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 320.0,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 320.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    node = plan.root
+
+    assert not schema_skill.matches_node(node, schema_context=None), (
+        "requires_schema_context skill must abstain (return False) when "
+        "schema_context=None, even on a node that satisfies node_type"
+    )
+
+
+def test_schema_context_gate_passes_when_provided():
+    """
+    Same skill as above: when schema_context IS provided (even an empty dict —
+    no tables introspected yet), the gate passes and the skill evaluates its
+    remaining predicates normally. Proves the gate is purely a None-check,
+    not a 'table is present in the dict' check — that belongs to individual
+    schema-specific predicates added later.
+    """
+    schema_skill = Skill(
+        name="test_schema_gate",
+        description="",
+        detects={"node_type": "Seq Scan", "requires_schema_context": True},
+        severity="medium",
+        explanation="",
+        fix_template="",
+        covers_node_types=["Seq Scan"],
+    )
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 320.0,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 320.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    node = plan.root
+
+    assert schema_skill.matches_node(node, schema_context={}), (
+        "requires_schema_context skill must fire when schema_context is provided "
+        "(empty dict is sufficient — the gate is a None-check, not a lookup)"
     )
 
 
