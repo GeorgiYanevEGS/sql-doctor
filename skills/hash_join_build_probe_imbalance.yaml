@@ -13,6 +13,11 @@ explanation: >
   consuming more work_mem and increasing the risk of spilling to disk. The
   optimal choice is always to hash the smaller relation.
 fix_template: >
+  Note: if stale_statistics also fired on a node in this plan, the imbalanced
+  side assignment is likely a downstream consequence — the planner underestimated
+  one side's cardinality and hashed the larger relation as a result. ANALYZE on
+  the relevant table addresses both simultaneously.
+
   1) Run ANALYZE on both joined tables to give the planner accurate row-count
      statistics. Stale statistics are the most common reason the planner picks
      the wrong side — it estimated the larger table as smaller.

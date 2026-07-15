@@ -13,6 +13,13 @@ explanation: >
   executed many more times than planned, turning a seemingly cheap lookup
   into repeated random I/O at scale.
 fix_template: >
+  Note: if stale_statistics also fired on a node in this plan, both share the
+  same root cause — the planner's outer-row underestimate is a direct consequence
+  of stale statistics on the outer table; ANALYZE on {table} addresses both
+  simultaneously. If repeated_index_scan_in_loop also fired on an Index Scan in
+  this plan, switching to a Hash or Merge Join eliminates both findings at once:
+  the wrong join strategy and the repeated per-row Index Scan cost.
+
   1) Run ANALYZE on {table} (or VACUUM ANALYZE) to refresh the planner's
      row-count statistics for the outer table. Stale statistics are the most
      common cause of this underestimate.

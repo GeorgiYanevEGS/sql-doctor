@@ -20,6 +20,13 @@ explanation: >
   or vice versa with a hash join that then spills to disk.
 
 fix_template: >
+  Note: if nested_loop_bad_plan also fired in this plan, the bad outer-row estimate
+  is a downstream consequence of stale statistics on the outer table — ANALYZE
+  addresses both simultaneously. If hash_join_build_probe_imbalance also fired,
+  stale statistics on one side of the join likely caused the planner to
+  underestimate its cardinality and hash the wrong (larger) relation — ANALYZE
+  addresses both at once.
+
   Refresh statistics for "{table}":
     ANALYZE {table};
   If the skew is on a specific column (e.g. a status column with very

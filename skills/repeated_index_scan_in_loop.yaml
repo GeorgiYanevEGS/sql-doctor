@@ -13,6 +13,11 @@ explanation: >
   cousin of repeated_seq_scan_in_loop — harder to spot precisely because the
   index makes each iteration look efficient.
 fix_template: >
+  Note: if nested_loop_bad_plan also fired on the parent Nested Loop node in this
+  plan, both share the same root: the planner chose Nested Loop due to a bad outer
+  estimate, then paid the per-row Index Scan cost at scale. Switching to Hash Join
+  or Merge Join (via ANALYZE or SET enable_nestloop = off) addresses both findings.
+
   The index on {table} is being probed once per outer row. Consider whether
   the join driving this lookup could be restructured:
   1) If this is the inner side of a Nested Loop driven by a large outer
