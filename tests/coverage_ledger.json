@@ -12,6 +12,10 @@
     "node_type": "Seq Scan"
   },
   {
+    "skill_name": "redundant_sort_after_ordered_scan",
+    "node_type": "Sort"
+  },
+  {
     "skill_name": "repeated_seq_scan_in_loop",
     "node_type": "Seq Scan"
   },

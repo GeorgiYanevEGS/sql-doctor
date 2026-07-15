@@ -563,6 +563,105 @@ def test_no_false_positive_sort_in_memory():
     assert "sort_spill_to_disk" not in names, f"in-memory sort wrongly flagged, got {names}"
 
 
+def test_sort_key_parsed_from_explain_json():
+    """Sort Key array from EXPLAIN JSON must be captured on PlanNode.sort_key."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["created_at DESC", "id"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 256,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 100,
+            "Actual Rows": 100,
+            "Total Cost": 50.0,
+            "Actual Total Time": 2.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 100,
+                "Actual Rows": 100,
+                "Total Cost": 40.0,
+                "Actual Total Time": 1.5,
+            }],
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 2.1,
+    }]
+    plan = parse_explain_json(explain_json)
+    sort_node = plan.root
+    assert sort_node.sort_key == ["created_at DESC", "id"], (
+        f"expected sort_key=['created_at DESC', 'id'], got {sort_node.sort_key!r}"
+    )
+
+
+def test_redundant_sort_after_ordered_scan():
+    """Sort directly on top of an Index Scan — shape matches, skill fires as heuristic."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 512,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 1000,
+            "Actual Rows": 1000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 100.0,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_account_id",
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 4000.0,
+                "Actual Total Time": 80.0,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 100.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" in names, (
+        f"expected redundant_sort_after_ordered_scan, got {names}"
+    )
+
+
+def test_no_false_positive_sort_over_seq_scan():
+    """Sort on top of a Seq Scan is NOT a redundant sort — Seq Scan output is unordered."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 512,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 1000,
+            "Actual Rows": 1000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 100.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 4000.0,
+                "Actual Total Time": 80.0,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 100.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" not in names, (
+        f"Sort over Seq Scan wrongly flagged as redundant, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

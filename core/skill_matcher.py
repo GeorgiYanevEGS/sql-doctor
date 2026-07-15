@@ -168,6 +168,14 @@ class Skill:
             if node.sort_method != "external merge":
                 return False
 
+        # Child node type predicate: the node must have at least one immediate child
+        # whose node_type appears in the allowed list. Enables parent-looks-down-at-child
+        # pattern detection without needing a child-to-parent backreference.
+        if "child_node_type" in rules:
+            allowed = rules["child_node_type"]
+            if not any(c.node_type in allowed for c in node.children):
+                return False
+
         return True
 
     def fix_text(self, node: PlanNode) -> str:

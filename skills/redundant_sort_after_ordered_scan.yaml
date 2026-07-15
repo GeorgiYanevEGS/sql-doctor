@@ -1,0 +1,24 @@
+name: redundant_sort_after_ordered_scan
+covers_node_types: ["Sort"]
+# v1 heuristic: fires on shape alone (Sort directly over an ordered scan node).
+# Does NOT verify that Sort Key matches the index's output order — that requires
+# schema introspection (IndexInfo) which is not yet threaded into skill matching.
+# Findings from this skill are a high-confidence hypothesis to verify manually,
+# not a proven-certain diagnosis. v2 (sort-key-vs-index-order comparison) is
+# deferred until schema introspection is available.
+detects:
+  node_type: "Sort"
+  child_node_type: ["Index Scan", "Index Only Scan"]
+severity: medium
+explanation: >
+  A Sort node sits directly on top of an Index Scan or Index Only Scan.
+  Index scans on a suitable index already return rows in a defined order,
+  so the Sort may be redundant — verify that the sort key matches the
+  index's leading columns and sort direction.
+fix_template: >
+  1) Check whether the index on {table} covers the sort key in the same
+     order: \d+ {index}
+  2) If it does, confirm the query's ORDER BY matches the index order
+     (including ASC/DESC). The planner should eliminate the Sort node
+     automatically when the match is exact.
+  3) If not redundant, consider a composite index covering the sort key.

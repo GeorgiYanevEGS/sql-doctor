@@ -29,6 +29,9 @@ class PlanNode:
     # sort exceeded work_mem and wrote sorted runs to disk.
     sort_method: str | None = None
     sort_space_type: str | None = None
+    # Sort Key array, e.g. ["created_at DESC", "id"]. Used by skills comparing
+    # sort order against an underlying index's output order.
+    sort_key: list[str] = field(default_factory=list)
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -93,6 +96,7 @@ def _parse_node(raw: dict) -> PlanNode:
         original_hash_batches=int(raw["Original Hash Batches"]) if "Original Hash Batches" in raw else None,
         sort_method=raw.get("Sort Method"),
         sort_space_type=raw.get("Sort Space Type"),
+        sort_key=list(raw.get("Sort Key", [])),
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))
