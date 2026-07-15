@@ -4,6 +4,7 @@ name: subplan_per_row_execution
 # Coverage is not tracked per node type for this skill — the false-positive
 # guards live in tests/test_skills.py instead.
 covers_node_types: []
+covers_all_node_types_exempt: true
 detects:
   requires_subplan_parent: true
   min_actual_loops: 50

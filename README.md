@@ -121,7 +121,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 119 tests
+python -m pytest tests/ -v         # runs all 120 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -148,7 +148,7 @@ bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
 correlated-subplan-awareness, sort-expression-awareness,
 unique-dedup-without-index-awareness, and initplan-cost-awareness), provider
 abstraction (3 backends), schema introspection, validator, coverage ledger,
-CLI wiring, 119 tests:
+CLI wiring, 120 tests:
 
 - **68 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
@@ -158,9 +158,11 @@ CLI wiring, 119 tests:
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
   (canonical ordering, VacuousTestError, assertion on skill firing).
-- **8 coverage-completeness tests** — assert every (skill, node type)
+- **9 coverage-completeness tests** — assert every (skill, node type)
   pair declared in `covers_node_types` has a corresponding ledger entry;
-  closes the gap that regenerate-and-diff cannot catch.
+  closes the gap that regenerate-and-diff cannot catch. Includes a test
+  that a bare `covers_node_types: []` without `covers_all_node_types_exempt:
+  true` fails by name rather than silently passing.
 - **3 CLI tests** — verify `ledger-status` exit codes and output for
   OK, MISSING, and CORRUPT ledger states.
 - **1 integration test** — loads the real committed ledger and confirms

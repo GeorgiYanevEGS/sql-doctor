@@ -80,6 +80,10 @@ class Skill:
     explanation: str
     fix_template: str
     covers_node_types: list[str] = field(default_factory=list)
+    # When covers_node_types is [], this field must be True to signal "intentionally not
+    # participating in per-node-type completeness checking". A bare [] without this flag
+    # is treated as an accidental omission and fails the completeness check by name.
+    covers_all_node_types_exempt: bool = False
     scope: str = "node"  # "node" = evaluated per plan node; "plan" = evaluated once per plan
     # Populated by load_skills when a ledger is present; None = no ledger (all trusted).
     _verified_node_types: set[str] | None = field(default=None, repr=False, compare=False)
@@ -102,6 +106,7 @@ class Skill:
             explanation=data.get("explanation", "").strip(),
             fix_template=data.get("fix_template", "").strip(),
             covers_node_types=data.get("covers_node_types", []),
+            covers_all_node_types_exempt=data.get("covers_all_node_types_exempt", False),
             scope=data.get("scope", "node"),
         )
 

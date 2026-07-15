@@ -66,6 +66,8 @@ def check_completeness(
     missing = []
     for skill in skills:
         if not skill.covers_node_types:
+            if not skill.covers_all_node_types_exempt:
+                missing.append((skill.name, "<covers_all_node_types_exempt: true required>"))
             continue
         if skill.covers_node_types == ["*"]:
             if skill.name in _FIXED_COVERAGE_STAR_SKILLS:
@@ -87,7 +89,7 @@ def check_completeness(
 # ---------------------------------------------------------------------------
 
 
-def _make_skill(name: str, covers: list[str]) -> Skill:
+def _make_skill(name: str, covers: list[str], *, exempt: bool = False) -> Skill:
     return Skill(
         name=name,
         description="",
@@ -96,6 +98,7 @@ def _make_skill(name: str, covers: list[str]) -> Skill:
         explanation="",
         fix_template="",
         covers_node_types=covers,
+        covers_all_node_types_exempt=exempt,
     )
 
 
@@ -146,9 +149,18 @@ def test_star_skill_covered_for_all_known_node_types():
     assert missing == []
 
 
+def test_empty_covers_without_exempt_flag_fails_completeness():
+    """covers_node_types: [] without covers_all_node_types_exempt: true is an error, not a silent pass."""
+    skill = _make_skill("accidental_empty", [])
+    missing = check_completeness([skill], [])
+    assert ("accidental_empty", "<covers_all_node_types_exempt: true required>") in missing, (
+        f"expected completeness error for skill with bare covers_node_types: [], got {missing}"
+    )
+
+
 def test_skill_with_empty_covers_node_types_is_ignored():
-    """A skill with no covers_node_types declaration contributes nothing to completeness."""
-    skill = _make_skill("unconfigured", [])
+    """A skill with covers_node_types: [] AND covers_all_node_types_exempt: true is correctly exempt."""
+    skill = _make_skill("unconfigured", [], exempt=True)
     missing = check_completeness([skill], [])
     assert missing == []
 
