@@ -36,6 +36,10 @@
     "node_type": "Seq Scan"
   },
   {
+    "skill_name": "nested_loop_bad_plan",
+    "node_type": "Nested Loop"
+  },
+  {
     "skill_name": "redundant_sort_after_ordered_scan",
     "node_type": "Sort"
   },

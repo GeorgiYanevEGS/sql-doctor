@@ -187,6 +187,18 @@ class Skill:
             if (node.heap_fetches / node.actual_rows) < rules["min_heap_fetch_ratio"]:
                 return False
 
+        # Outer-child row-estimate ratio: evaluates row_estimate_error_ratio on
+        # node.children[0] (the outer/left side of a Nested Loop). Guards on
+        # plan_rows <= 0 for the same reason as the sibling ratio predicates above.
+        if "outer_child_min_row_estimate_error_ratio" in rules:
+            if not node.children:
+                return False
+            outer = node.children[0]
+            if outer.plan_rows <= 0:
+                return False
+            if outer.row_estimate_error_ratio < rules["outer_child_min_row_estimate_error_ratio"]:
+                return False
+
         # Child node type predicate: the node must have at least one immediate child
         # whose node_type appears in the allowed list. Enables parent-looks-down-at-child
         # pattern detection without needing a child-to-parent backreference.

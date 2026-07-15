@@ -1,0 +1,27 @@
+name: nested_loop_bad_plan
+covers_node_types: ["Nested Loop"]
+detects:
+  node_type: "Nested Loop"
+  child_node_type: ["Index Scan", "Index Only Scan"]
+  outer_child_min_row_estimate_error_ratio: 10.0
+severity: high
+explanation: >
+  The planner severely underestimated the outer side of this Nested Loop —
+  the actual row count was at least 10x the estimate. Because the inner side
+  uses an Index Scan, the planner chose this join strategy expecting few loop
+  iterations. With far more outer rows than expected, the Index Scan was
+  executed many more times than planned, turning a seemingly cheap lookup
+  into repeated random I/O at scale.
+fix_template: >
+  1) Run ANALYZE on {table} (or VACUUM ANALYZE) to refresh the planner's
+     row-count statistics for the outer table. Stale statistics are the most
+     common cause of this underestimate.
+  2) If the estimate is still wrong after ANALYZE, check for column correlation
+     or data skew: pg_stats.correlation and pg_stats.most_common_vals can
+     reveal whether the default statistics target (default_statistics_target)
+     is too low for this column's distribution. Increase it with
+     ALTER TABLE {table} ALTER COLUMN <col> SET STATISTICS 500 and re-ANALYZE.
+  3) If the join is unavoidably large, consider a Hash Join or Merge Join
+     instead — both are O(N+M) rather than O(N*M) and scale better when the
+     outer side is large. You can force this with SET enable_nestloop = off
+     to test the alternative plan before making the change permanent.

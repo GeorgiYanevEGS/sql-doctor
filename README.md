@@ -94,7 +94,8 @@ sql-doctor/
 │   ├── sort_spill_to_disk.yaml
 │   ├── redundant_sort_after_ordered_scan.yaml
 │   ├── empty_result_bad_estimate.yaml
-│   └── index_only_scan_heap_fetches.yaml
+│   ├── index_only_scan_heap_fetches.yaml
+│   └── nested_loop_bad_plan.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -108,7 +109,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 64 tests
+python -m pytest tests/ -v         # runs all 68 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -128,15 +129,15 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 9 skills (with selectivity-, loop-, spill-,
-child-shape-, low-estimate-, and heap-fetch-awareness), provider abstraction
-(3 backends), schema introspection, validator, coverage ledger, CLI wiring,
-64 tests:
+What's implemented: parser, 10 skills (with selectivity-, loop-, spill-,
+child-shape-, low-estimate-, heap-fetch-, and outer-child-estimate-awareness),
+provider abstraction (3 backends), schema introspection, validator, coverage
+ledger, CLI wiring, 68 tests:
 
-- **28 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **31 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **17 negative tests** — each proves a specific (skill, node type) pair
+- **18 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
@@ -153,7 +154,7 @@ child-shape-, low-estimate-, and heap-fetch-awareness), provider abstraction
 
 Historical validation happened against a real database and is captured in
 fixed regression tests. CI runs on every push and pull request to main:
-the `test` job runs all 64 tests, and the `ledger-integrity` job
+the `test` job runs all 68 tests, and the `ledger-integrity` job
 regenerates the coverage ledger and diffs against the committed state to
 catch a stale ledger before merge.
 

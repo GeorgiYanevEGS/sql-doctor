@@ -872,6 +872,147 @@ def test_no_false_positive_sort_over_seq_scan():
     )
 
 
+def test_nested_loop_bad_plan():
+    """
+    Nested Loop where the outer child's row estimate was 100x off — the planner
+    expected 5 outer rows (loop iterations) but got 50,000. Inner child is an
+    Index Scan, confirming the planner chose index lookup on the inner side.
+    nested_loop_bad_plan must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 5,
+            "Actual Rows": 50000,
+            "Total Cost": 100000.0,
+            "Actual Total Time": 5000.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "customers",
+                    "Plan Rows": 5,
+                    "Actual Rows": 50000,
+                    "Total Cost": 5000.0,
+                    "Actual Total Time": 200.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Scan",
+                    "Relation Name": "transactions",
+                    "Index Name": "idx_transactions_customer_id",
+                    "Index Cond": "(customer_id = customers.id)",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 1.5,
+                    "Actual Total Time": 0.05,
+                    "Actual Loops": 50000,
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 5000.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "nested_loop_bad_plan" in names, (
+        f"expected nested_loop_bad_plan (outer ratio=10000x), got {names}"
+    )
+
+
+def test_no_false_positive_nested_loop_good_estimate():
+    """
+    Nested Loop where the outer child's estimate was accurate (~1x off).
+    The inner Index Scan confirms the shape but the outer estimate is fine —
+    nested_loop_bad_plan must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 100,
+            "Actual Rows": 110,
+            "Total Cost": 500.0,
+            "Actual Total Time": 20.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "customers",
+                    "Plan Rows": 100,
+                    "Actual Rows": 110,
+                    "Total Cost": 200.0,
+                    "Actual Total Time": 8.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Index Scan",
+                    "Relation Name": "transactions",
+                    "Index Name": "idx_transactions_customer_id",
+                    "Index Cond": "(customer_id = customers.id)",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 1.5,
+                    "Actual Total Time": 0.1,
+                    "Actual Loops": 110,
+                },
+            ],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 20.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "nested_loop_bad_plan" not in names, (
+        f"outer ratio ~1.1x should not fire nested_loop_bad_plan, got {names}"
+    )
+
+
+def test_no_false_positive_nested_loop_seq_scan_inner():
+    """
+    Nested Loop where the outer child is badly underestimated but the inner
+    child is a Seq Scan (not an Index Scan). Shape check fails — nested_loop_bad_plan
+    only applies when the planner chose an Index Scan for the inner side.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 5,
+            "Actual Rows": 50000,
+            "Total Cost": 200000.0,
+            "Actual Total Time": 10000.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "customers",
+                    "Plan Rows": 5,
+                    "Actual Rows": 50000,
+                    "Total Cost": 5000.0,
+                    "Actual Total Time": 200.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Filter": "(customer_id = customers.id)",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 3.0,
+                    "Actual Total Time": 0.15,
+                    "Actual Loops": 50000,
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 10000.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "nested_loop_bad_plan" not in names, (
+        f"Seq Scan inner child should not trigger nested_loop_bad_plan, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

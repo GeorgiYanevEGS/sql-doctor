@@ -232,6 +232,61 @@ def test_negative_index_only_scan_heap_fetches_low_ratio():
 
 
 # ---------------------------------------------------------------------------
+# nested_loop_bad_plan
+# ---------------------------------------------------------------------------
+
+
+def test_negative_nested_loop_bad_plan_good_estimate():
+    """
+    Nested Loop where the outer child's row estimate is accurate (plan_rows=100,
+    actual_rows=110, ratio≈1.1x — well below the 10x threshold). Inner child is
+    an Index Scan so the shape matches, but the estimate is fine.
+    nested_loop_bad_plan must not fire.
+    Registers (nested_loop_bad_plan, Nested Loop) in the ledger.
+    """
+    assert_no_match(
+        "nested_loop_bad_plan",
+        "Nested Loop",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Nested Loop",
+                    "Plan Rows": 100,
+                    "Actual Rows": 110,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 20.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "customers",
+                            "Plan Rows": 100,
+                            "Actual Rows": 110,
+                            "Total Cost": 200.0,
+                            "Actual Total Time": 8.0,
+                            "Actual Loops": 1,
+                        },
+                        {
+                            "Node Type": "Index Scan",
+                            "Relation Name": "transactions",
+                            "Index Name": "idx_transactions_customer_id",
+                            "Index Cond": "(customer_id = customers.id)",
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 1.5,
+                            "Actual Total Time": 0.1,
+                            "Actual Loops": 110,
+                        },
+                    ],
+                },
+                "Planning Time": 0.2,
+                "Execution Time": 20.2,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # missing_index
 # ---------------------------------------------------------------------------
 
