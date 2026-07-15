@@ -1640,6 +1640,57 @@ def test_no_false_positive_hash_join_build_smaller():
     )
 
 
+def test_planning_time_dominates():
+    """
+    Plan where planning_time=25ms and execution_time=2.5ms — ratio=10x, well
+    above the 5x threshold. planning_time_dominates must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "accounts",
+            "Filter": "(id = 42)",
+            "Plan Rows": 1,
+            "Actual Rows": 1,
+            "Total Cost": 2.0,
+            "Actual Total Time": 0.5,
+        },
+        "Planning Time": 25.0,
+        "Execution Time": 2.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "planning_time_dominates" in names, (
+        f"expected planning_time_dominates (ratio=10x), got {names}"
+    )
+
+
+def test_no_false_positive_planning_time_normal():
+    """
+    Plan where execution_time >> planning_time (ratio=0.002x) — no issue.
+    planning_time_dominates must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 4500.0,
+            "Actual Total Time": 490.0,
+        },
+        "Planning Time": 1.0,
+        "Execution Time": 500.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "planning_time_dominates" not in names, (
+        f"execution >> planning (ratio=0.002x) should not fire, got {names}"
+    )
+
+
 def test_bitmap_heap_lossy_fields_parsed():
     """
     Bitmap Heap Scan with lossy pages: rows_removed_by_recheck, exact_heap_blocks,

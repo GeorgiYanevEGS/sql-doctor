@@ -1102,6 +1102,33 @@ def test_negative_sort_spill_to_disk_in_memory():
 # ---------------------------------------------------------------------------
 
 
+def test_negative_planning_time_dominates_low_ratio():
+    """
+    Plan where execution_time (500ms) >> planning_time (1ms): ratio=0.002,
+    well below the 5x threshold. planning_time_dominates must not fire.
+    Registers (planning_time_dominates, PLAN_LEVEL) in the ledger.
+    """
+    assert_no_match(
+        "planning_time_dominates",
+        "PLAN_LEVEL",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 50000,
+                    "Actual Rows": 50000,
+                    "Total Cost": 4500.0,
+                    "Actual Total Time": 490.0,
+                },
+                "Planning Time": 1.0,
+                "Execution Time": 500.0,
+            }
+        ],
+        SKILLS,
+    )
+
+
 def test_negative_bitmap_heap_lossy_exact_blocks_only():
     """
     Bitmap Heap Scan with all-exact blocks (Lossy Heap Blocks=0,

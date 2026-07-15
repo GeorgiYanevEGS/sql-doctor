@@ -37,25 +37,31 @@ def assert_no_match(
     success so load_skills() can verify coverage at runtime.
     """
     plan = parse_explain_json(explain_json)
-    target_nodes = [n for n in plan.all_nodes() if n.node_type == node_type]
-
-    if not target_nodes:
-        raise VacuousTestError(
-            f"assert_no_match({skill_name!r}, {node_type!r}): "
-            f"plan contains no '{node_type}' node — this test is vacuous. "
-            f"Use a fixture that actually contains the claimed node type."
-        )
 
     skill = next((s for s in skills if s.name == skill_name), None)
     if skill is None:
         raise ValueError(f"No skill named {skill_name!r} in provided skill list")
 
-    for node in target_nodes:
-        assert not skill.matches_node(node, table_row_counts or {}), (
-            f"assert_no_match({skill_name!r}, {node_type!r}): "
-            f"skill fired on node '{node.node_type}' — this is a positive match, not a negative. "
-            f"Use a fixture where the skill genuinely does not fire."
+    if node_type == "PLAN_LEVEL":
+        # Plan-level skills have no per-node assertion; verify matches_plan() returns False.
+        assert not skill.matches_plan(plan), (
+            f"assert_no_match({skill_name!r}, 'PLAN_LEVEL'): "
+            f"skill.matches_plan() returned True — use a fixture where the skill does not fire."
         )
+    else:
+        target_nodes = [n for n in plan.all_nodes() if n.node_type == node_type]
+        if not target_nodes:
+            raise VacuousTestError(
+                f"assert_no_match({skill_name!r}, {node_type!r}): "
+                f"plan contains no '{node_type}' node — this test is vacuous. "
+                f"Use a fixture that actually contains the claimed node type."
+            )
+        for node in target_nodes:
+            assert not skill.matches_node(node, table_row_counts or {}), (
+                f"assert_no_match({skill_name!r}, {node_type!r}): "
+                f"skill fired on node '{node.node_type}' — this is a positive match, not a negative. "
+                f"Use a fixture where the skill genuinely does not fire."
+            )
 
     _write_ledger_entry(skill_name, node_type, ledger_path or DEFAULT_LEDGER_PATH)
 

@@ -1,0 +1,35 @@
+name: planning_time_dominates
+scope: plan
+covers_node_types: ["PLAN_LEVEL"]
+detects:
+  min_planning_execution_ratio: 5.0
+severity: medium
+explanation: >
+  Planning time is more than 5x the execution time for this query. When
+  planning dominates, the query is typically short-running and executed
+  frequently — every execution pays a full planning cost that dwarfs the
+  actual work done. Common causes: a complex FROM clause forcing the planner
+  to evaluate many join orders, a high join_collapse_limit preventing early
+  pruning, or the GEQO threshold not triggering for large join counts.
+  Note: the 5x threshold is a reasoned starting point, not a
+  regression-tested value — validate against your own query mix before
+  treating every finding as high priority. Planning time also varies with
+  server load and pg_catalog cache warmth.
+fix_template: >
+  1) Use prepared statements to amortize planning cost across executions:
+       PREPARE stmt (int) AS SELECT ... WHERE id = $1;
+       EXECUTE stmt(42);
+     With session-level connection pooling (pgBouncer pool_mode=session),
+     prepared statements survive across requests. With transaction-level
+     pooling, DEALLOCATE and re-PREPARE at the start of each connection, or
+     use a client-side statement cache.
+  2) Reduce the planner's join-order search space for multi-table queries:
+       SET join_collapse_limit = 1;   -- disables join reordering entirely
+       SET geqo_threshold = 8;        -- GEQO kicks in earlier (default: 12)
+     These are session-level settings. Test on a copy before applying
+     globally — disabling join reordering can worsen other queries.
+  3) If the query uses many CTEs, selectively materialize intermediate results
+     to reduce what the planner must reason about in each scope:
+       WITH expensive_cte AS MATERIALIZED ( ... )
+     This prevents the planner from inlining the CTE into the outer query,
+     trading cross-CTE optimization for faster planning.

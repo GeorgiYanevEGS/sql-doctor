@@ -68,7 +68,7 @@ class SkillMatch:
     severity: str
     explanation: str
     fix_template: str
-    matched_node: PlanNode
+    matched_node: PlanNode | None
 
 
 @dataclass
@@ -80,6 +80,7 @@ class Skill:
     explanation: str
     fix_template: str
     covers_node_types: list[str] = field(default_factory=list)
+    scope: str = "node"  # "node" = evaluated per plan node; "plan" = evaluated once per plan
     # Populated by load_skills when a ledger is present; None = no ledger (all trusted).
     _verified_node_types: set[str] | None = field(default=None, repr=False, compare=False)
 
@@ -101,6 +102,7 @@ class Skill:
             explanation=data.get("explanation", "").strip(),
             fix_template=data.get("fix_template", "").strip(),
             covers_node_types=data.get("covers_node_types", []),
+            scope=data.get("scope", "node"),
         )
 
     def covers(self, node_type: str) -> bool:
@@ -265,7 +267,19 @@ class Skill:
 
         return True
 
-    def fix_text(self, node: PlanNode) -> str:
+    def matches_plan(self, plan: ParsedPlan) -> bool:
+        """Evaluate plan-level detection rules (scope: plan skills only)."""
+        rules = self.detects
+        if "min_planning_execution_ratio" in rules:
+            if plan.execution_time_ms <= 0:
+                return False
+            if (plan.planning_time_ms / plan.execution_time_ms) < rules["min_planning_execution_ratio"]:
+                return False
+        return True
+
+    def fix_text(self, node: PlanNode | None) -> str:
+        if node is None:
+            return self.fix_template
         return self.fix_template.format(
             table=node.relation_name or "<table>",
             index=node.index_name or "<index>",
@@ -345,9 +359,25 @@ def match_skills(
     covered_verified: set[str] = set()    # covered by a verified skill, didn't fire
     covered_unverified: set[str] = set()  # covered only by unverified skills, didn't fire
 
+    # Plan-level skills: evaluated once per plan, not per node.
+    for skill in skills:
+        if skill.scope == "plan" and skill.matches_plan(plan):
+            matches.append(
+                SkillMatch(
+                    skill_name=skill.name,
+                    severity=skill.severity,
+                    explanation=skill.explanation,
+                    fix_template=skill.fix_text(None),
+                    matched_node=None,
+                )
+            )
+
+    # Node-level skills: evaluated per node (existing loop).
     for node in plan.all_nodes():
         node_matched = False
         for skill in skills:
+            if skill.scope == "plan":
+                continue
             if skill.matches_node(node, table_row_counts):
                 matches.append(
                     SkillMatch(
@@ -364,6 +394,8 @@ def match_skills(
             ever_matched.add(node.node_type)
         else:
             for skill in skills:
+                if skill.scope == "plan":
+                    continue
                 if skill.covers(node.node_type):
                     if skill.is_verified_for(node.node_type):
                         covered_verified.add(node.node_type)

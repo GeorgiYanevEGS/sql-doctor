@@ -72,6 +72,10 @@
     "node_type": "Gather Merge"
   },
   {
+    "skill_name": "planning_time_dominates",
+    "node_type": "PLAN_LEVEL"
+  },
+  {
     "skill_name": "redundant_sort_after_ordered_scan",
     "node_type": "Sort"
   },
