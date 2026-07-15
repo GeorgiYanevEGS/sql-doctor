@@ -1013,6 +1013,138 @@ def test_no_false_positive_nested_loop_seq_scan_inner():
     )
 
 
+def test_workers_parsed_from_explain_json():
+    """Workers Planned and Workers Launched must be captured on Gather PlanNode."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Gather",
+            "Workers Planned": 4,
+            "Workers Launched": 2,
+            "Plan Rows": 100000,
+            "Actual Rows": 100000,
+            "Total Cost": 50000.0,
+            "Actual Total Time": 2000.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 25000,
+                "Actual Rows": 50000,
+                "Total Cost": 10000.0,
+                "Actual Total Time": 1800.0,
+                "Actual Loops": 2,
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 2000.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    node = plan.root
+    assert node.workers_planned == 4, f"expected workers_planned=4, got {node.workers_planned!r}"
+    assert node.workers_launched == 2, f"expected workers_launched=2, got {node.workers_launched!r}"
+
+
+def test_parallel_worker_underutilization():
+    """
+    Gather with workers_planned=4 but workers_launched=2 — server couldn't
+    provide all requested workers. parallel_worker_underutilization must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Gather",
+            "Workers Planned": 4,
+            "Workers Launched": 2,
+            "Plan Rows": 100000,
+            "Actual Rows": 100000,
+            "Total Cost": 50000.0,
+            "Actual Total Time": 2000.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 25000,
+                "Actual Rows": 50000,
+                "Total Cost": 10000.0,
+                "Actual Total Time": 1800.0,
+                "Actual Loops": 2,
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 2000.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "parallel_worker_underutilization" in names, (
+        f"expected parallel_worker_underutilization (2 of 4 workers), got {names}"
+    )
+
+
+def test_no_false_positive_parallel_full_workers():
+    """Gather where all planned workers launched — no shortfall, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Gather",
+            "Workers Planned": 4,
+            "Workers Launched": 4,
+            "Plan Rows": 100000,
+            "Actual Rows": 100000,
+            "Total Cost": 50000.0,
+            "Actual Total Time": 800.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 25000,
+                "Actual Rows": 25000,
+                "Total Cost": 10000.0,
+                "Actual Total Time": 700.0,
+                "Actual Loops": 4,
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 800.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "parallel_worker_underutilization" not in names, (
+        f"all 4 workers launched, should not fire, got {names}"
+    )
+
+
+def test_no_false_positive_gather_merge_full_workers():
+    """Gather Merge where all planned workers launched — must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Gather Merge",
+            "Workers Planned": 2,
+            "Workers Launched": 2,
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 30000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [{
+                "Node Type": "Sort",
+                "Sort Key": ["amount DESC"],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 512,
+                "Sort Space Type": "Memory",
+                "Plan Rows": 25000,
+                "Actual Rows": 25000,
+                "Total Cost": 14000.0,
+                "Actual Total Time": 550.0,
+                "Actual Loops": 2,
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 600.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "parallel_worker_underutilization" not in names, (
+        f"Gather Merge with full workers should not fire, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

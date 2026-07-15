@@ -287,6 +287,88 @@ def test_negative_nested_loop_bad_plan_good_estimate():
 
 
 # ---------------------------------------------------------------------------
+# parallel_worker_underutilization
+# ---------------------------------------------------------------------------
+
+
+def test_negative_parallel_worker_underutilization_gather_full():
+    """
+    Gather with workers_planned=4 and workers_launched=4 — full parallelism
+    achieved, no shortfall. parallel_worker_underutilization must not fire.
+    Registers (parallel_worker_underutilization, Gather) in the ledger.
+    """
+    assert_no_match(
+        "parallel_worker_underutilization",
+        "Gather",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Gather",
+                    "Workers Planned": 4,
+                    "Workers Launched": 4,
+                    "Plan Rows": 100000,
+                    "Actual Rows": 100000,
+                    "Total Cost": 50000.0,
+                    "Actual Total Time": 800.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 25000,
+                        "Actual Rows": 25000,
+                        "Total Cost": 10000.0,
+                        "Actual Total Time": 700.0,
+                        "Actual Loops": 4,
+                    }],
+                },
+                "Planning Time": 0.5,
+                "Execution Time": 800.5,
+            }
+        ],
+        SKILLS,
+    )
+
+
+def test_negative_parallel_worker_underutilization_gather_merge_full():
+    """
+    Gather Merge with workers_planned=2 and workers_launched=2 — full
+    parallelism, no shortfall. parallel_worker_underutilization must not fire.
+    Registers (parallel_worker_underutilization, Gather Merge) in the ledger.
+    """
+    assert_no_match(
+        "parallel_worker_underutilization",
+        "Gather Merge",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Gather Merge",
+                    "Workers Planned": 2,
+                    "Workers Launched": 2,
+                    "Plan Rows": 50000,
+                    "Actual Rows": 50000,
+                    "Total Cost": 30000.0,
+                    "Actual Total Time": 600.0,
+                    "Plans": [{
+                        "Node Type": "Sort",
+                        "Sort Key": ["amount DESC"],
+                        "Sort Method": "quicksort",
+                        "Sort Space Used": 512,
+                        "Sort Space Type": "Memory",
+                        "Plan Rows": 25000,
+                        "Actual Rows": 25000,
+                        "Total Cost": 14000.0,
+                        "Actual Total Time": 550.0,
+                        "Actual Loops": 2,
+                    }],
+                },
+                "Planning Time": 0.4,
+                "Execution Time": 600.4,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # missing_index
 # ---------------------------------------------------------------------------
 

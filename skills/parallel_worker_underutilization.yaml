@@ -1,0 +1,27 @@
+name: parallel_worker_underutilization
+covers_node_types: ["Gather", "Gather Merge"]
+detects:
+  node_type: ["Gather", "Gather Merge"]
+  requires_worker_shortfall: true
+severity: medium
+explanation: >
+  The query plan requested parallel workers but the server launched fewer than
+  planned. Workers Launched < Workers Planned means max_worker_processes or
+  max_parallel_workers was exhausted by concurrent load at execution time —
+  the query ran with less parallelism than the planner assumed, making its
+  cost estimates invalid and the plan slower than expected.
+fix_template: >
+  1) Check current parallel worker limits: SHOW max_worker_processes;
+     SHOW max_parallel_workers; SHOW max_parallel_workers_per_gather.
+     If these are at default (8 / 8 / 2), they may be too low for the
+     concurrent workload on this server.
+  2) Identify competing parallel queries: SELECT query, wait_event_type,
+     wait_event FROM pg_stat_activity WHERE state = 'active'. If multiple
+     large parallel queries run simultaneously, raise max_worker_processes
+     and max_parallel_workers in postgresql.conf and reload.
+  3) For batch ETL jobs where parallelism is critical, schedule them to
+     avoid overlap with other large parallel-eligible queries, or use
+     pg_stat_activity to verify worker availability before launching.
+  4) As a targeted fix for {table}: ALTER TABLE {table} SET
+     (parallel_workers = N) to reserve a specific worker count for this
+     table's scans, overriding the planner's default calculation.

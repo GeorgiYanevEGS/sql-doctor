@@ -86,10 +86,17 @@ class Skill:
     @classmethod
     def from_yaml_file(cls, path: Path) -> "Skill":
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        detects = data["detects"]
+        child_rules = {k for k in detects if k.startswith("child_") and k != "child_node_type"}
+        if child_rules and "child_node_type" not in detects:
+            raise ValueError(
+                f"Skill '{data['name']}' declares {child_rules} but no child_node_type — "
+                f"matched_child would always be None, causing silent false negatives."
+            )
         return cls(
             name=data["name"],
             description=data.get("description", ""),
-            detects=data["detects"],
+            detects=detects,
             severity=data.get("severity", "medium"),
             explanation=data.get("explanation", "").strip(),
             fix_template=data.get("fix_template", "").strip(),
@@ -109,8 +116,13 @@ class Skill:
         rules = self.detects
         table_row_counts = table_row_counts or {}
 
-        if "node_type" in rules and node.node_type != rules["node_type"]:
-            return False
+        if "node_type" in rules:
+            allowed = rules["node_type"]
+            if isinstance(allowed, list):
+                if node.node_type not in allowed:
+                    return False
+            elif node.node_type != allowed:
+                return False
 
         if "min_row_estimate_error_ratio" in rules or "max_row_estimate_error_ratio" in rules:
             # Guard on plan_rows specifically, not on the ratio itself. The old
@@ -205,6 +217,15 @@ class Skill:
         if "child_node_type" in rules:
             allowed = rules["child_node_type"]
             if not any(c.node_type in allowed for c in node.children):
+                return False
+
+        # Parallel worker shortfall: workers_launched < workers_planned means the
+        # server couldn't provide all requested workers at execution time —
+        # typically max_worker_processes or max_parallel_workers exhaustion.
+        if rules.get("requires_worker_shortfall"):
+            if node.workers_planned is None or node.workers_launched is None:
+                return False
+            if node.workers_launched >= node.workers_planned:
                 return False
 
         return True

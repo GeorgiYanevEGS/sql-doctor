@@ -36,6 +36,11 @@ class PlanNode:
     # visibility map didn't mark the page as all-visible. High values mean the
     # scan degrades toward a regular Index Scan in practice.
     heap_fetches: int | None = None
+    # Gather / Gather Merge only: how many parallel workers the plan requested
+    # vs. how many the server actually launched. A shortfall means
+    # max_worker_processes (or max_parallel_workers) was exhausted at runtime.
+    workers_planned: int | None = None
+    workers_launched: int | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -102,6 +107,8 @@ def _parse_node(raw: dict) -> PlanNode:
         sort_space_type=raw.get("Sort Space Type"),
         sort_key=list(raw.get("Sort Key", [])),
         heap_fetches=int(raw["Heap Fetches"]) if "Heap Fetches" in raw else None,
+        workers_planned=int(raw["Workers Planned"]) if "Workers Planned" in raw else None,
+        workers_launched=int(raw["Workers Launched"]) if "Workers Launched" in raw else None,
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

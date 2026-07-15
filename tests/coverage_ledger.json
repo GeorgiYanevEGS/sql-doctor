@@ -40,6 +40,14 @@
     "node_type": "Nested Loop"
   },
   {
+    "skill_name": "parallel_worker_underutilization",
+    "node_type": "Gather"
+  },
+  {
+    "skill_name": "parallel_worker_underutilization",
+    "node_type": "Gather Merge"
+  },
+  {
     "skill_name": "redundant_sort_after_ordered_scan",
     "node_type": "Sort"
   },
