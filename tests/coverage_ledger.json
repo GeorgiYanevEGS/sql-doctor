@@ -4,6 +4,10 @@
     "node_type": "Bitmap Heap Scan"
   },
   {
+    "skill_name": "bitmap_or_missing_index_branch",
+    "node_type": "BitmapOr"
+  },
+  {
     "skill_name": "empty_result_bad_estimate",
     "node_type": "Hash"
   },

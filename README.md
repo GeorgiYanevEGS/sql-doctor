@@ -108,7 +108,8 @@ sql-doctor/
 │   ├── sort_expression_no_index.yaml
 │   ├── unique_without_index.yaml
 │   ├── initplan_expensive.yaml
-│   └── merge_join_child_sort_spill.yaml
+│   ├── merge_join_child_sort_spill.yaml
+│   └── bitmap_or_missing_index_branch.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -122,7 +123,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 124 tests
+python -m pytest tests/ -v         # runs all 127 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -142,19 +143,20 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 23 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 24 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
 join-condition-, build-probe-imbalance-, function-scan-cardinality-,
 bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
 correlated-subplan-awareness, sort-expression-awareness,
-unique-dedup-without-index-awareness, initplan-cost-awareness, and
-any-child-spill-awareness), provider abstraction (3 backends), schema
-introspection, validator, coverage ledger, CLI wiring, 124 tests:
+unique-dedup-without-index-awareness, initplan-cost-awareness,
+any-child-spill-awareness, and bitmap-or-branch-awareness), provider
+abstraction (3 backends), schema introspection, validator, coverage ledger,
+CLI wiring, 127 tests:
 
-- **71 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **73 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **33 negative tests** — each proves a specific (skill, node type) pair
+- **34 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself

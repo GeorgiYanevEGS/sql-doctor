@@ -2208,6 +2208,101 @@ def test_no_false_positive_hash_agg_no_spill():
     )
 
 
+def test_bitmap_or_missing_index_branch():
+    """BitmapOr with one Seq Scan child — one OR-branch lacks an index, must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 15000,
+            "Actual Rows": 15000,
+            "Total Cost": 6000.0,
+            "Actual Total Time": 450.0,
+            "Plans": [{
+                "Node Type": "BitmapOr",
+                "Plan Rows": 15000,
+                "Actual Rows": 15000,
+                "Total Cost": 5000.0,
+                "Actual Total Time": 380.0,
+                "Plans": [
+                    {
+                        "Node Type": "Bitmap Index Scan",
+                        "Index Name": "idx_transactions_status",
+                        "Plan Rows": 10000,
+                        "Actual Rows": 10000,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 30.0,
+                    },
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Filter": "(txn_type = 'REFUND')",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 4800.0,
+                        "Actual Total Time": 350.0,
+                    },
+                ],
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 450.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "bitmap_or_missing_index_branch" in names, (
+        f"expected bitmap_or_missing_index_branch (Seq Scan child of BitmapOr), got {names}"
+    )
+
+
+def test_no_false_positive_bitmap_or_all_index_scans():
+    """BitmapOr with all Bitmap Index Scan children — every OR-branch has an index, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 15000,
+            "Actual Rows": 15000,
+            "Total Cost": 3000.0,
+            "Actual Total Time": 120.0,
+            "Plans": [{
+                "Node Type": "BitmapOr",
+                "Plan Rows": 15000,
+                "Actual Rows": 15000,
+                "Total Cost": 2500.0,
+                "Actual Total Time": 80.0,
+                "Plans": [
+                    {
+                        "Node Type": "Bitmap Index Scan",
+                        "Index Name": "idx_transactions_status",
+                        "Plan Rows": 10000,
+                        "Actual Rows": 10000,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 30.0,
+                    },
+                    {
+                        "Node Type": "Bitmap Index Scan",
+                        "Index Name": "idx_transactions_txn_type",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 100.0,
+                        "Actual Total Time": 20.0,
+                    },
+                ],
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 120.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "bitmap_or_missing_index_branch" not in names, (
+        f"all BitmapOr children are index scans, should not fire, got {names}"
+    )
+
+
 def test_merge_join_child_sort_spill_outer():
     """Merge Join where the outer Sort child spilled to disk — must fire."""
     explain_json = [{

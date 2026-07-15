@@ -1328,6 +1328,56 @@ def test_negative_unique_without_index_small_sort():
     )
 
 
+def test_negative_bitmap_or_missing_index_branch_all_index_scans():
+    """
+    BitmapOr where all children are Bitmap Index Scans — no Seq Scan child.
+    bitmap_or_missing_index_branch must not fire.
+    Registers (bitmap_or_missing_index_branch, BitmapOr) in the ledger.
+    """
+    assert_no_match(
+        "bitmap_or_missing_index_branch",
+        "BitmapOr",
+        [{
+            "Plan": {
+                "Node Type": "Bitmap Heap Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 15000,
+                "Actual Rows": 15000,
+                "Total Cost": 3000.0,
+                "Actual Total Time": 120.0,
+                "Plans": [{
+                    "Node Type": "BitmapOr",
+                    "Plan Rows": 15000,
+                    "Actual Rows": 15000,
+                    "Total Cost": 2500.0,
+                    "Actual Total Time": 80.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Bitmap Index Scan",
+                            "Index Name": "idx_transactions_status",
+                            "Plan Rows": 10000,
+                            "Actual Rows": 10000,
+                            "Total Cost": 200.0,
+                            "Actual Total Time": 30.0,
+                        },
+                        {
+                            "Node Type": "Bitmap Index Scan",
+                            "Index Name": "idx_transactions_txn_type",
+                            "Plan Rows": 5000,
+                            "Actual Rows": 5000,
+                            "Total Cost": 100.0,
+                            "Actual Total Time": 20.0,
+                        },
+                    ],
+                }],
+            },
+            "Planning Time": 0.3,
+            "Execution Time": 120.3,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_merge_join_child_sort_spill_no_spill():
     """
     Merge Join where neither Sort child spilled (both quicksort) —
