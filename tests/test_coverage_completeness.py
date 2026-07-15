@@ -24,6 +24,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.skill_matcher import DEFAULT_LEDGER_PATH, Skill, load_skills
 
 
+# stale_statistics claims "*" (all node types) but would require a new negative
+# test every time any other skill gets tested against a new node type — O(skills
+# × node_types) growth. Instead, it is checked against a fixed representative
+# set covering the three structural categories: leaf scan, two-child join, and
+# single-child processing node. This set is frozen here and does not grow
+# automatically when other skills add new node types to the ledger.
+#
+# TODO: if a second "*" skill appears, replace this named exemption with a
+# general "scope: universal" YAML field and update check_completeness() to
+# read it, rather than duplicating the special-case logic.
+_STALE_STATISTICS_REQUIRED_TYPES: frozenset[str] = frozenset({
+    "Seq Scan",    # leaf scan
+    "Index Scan",  # leaf scan
+    "Nested Loop", # two-child join
+    "Hash",        # single-child processing (build side of Hash Join)
+    "Sort",        # single-child processing
+})
+
+
 def check_completeness(
     skills: list[Skill],
     ledger_entries: list[dict],
@@ -32,9 +51,10 @@ def check_completeness(
     Return (skill_name, node_type) pairs that are declared in covers_node_types
     but absent from the ledger. An empty list means the ledger is complete.
 
-    For "*" skills: checked against every node_type that appears in the ledger
-    for any skill ("all known node types"). This enforces that a wildcard claim
-    is backed by at least as many negative tests as the most-tested node types.
+    For "*" skills: normally checked against every node_type that appears in
+    the ledger for any skill ("all known node types"). Exception: stale_statistics
+    is checked against a fixed representative set (_STALE_STATISTICS_REQUIRED_TYPES)
+    to avoid O(skills × node_types) growth as the skill suite expands.
     """
     ledger_pairs = {(e["skill_name"], e["node_type"]) for e in ledger_entries}
     known_node_types = {e["node_type"] for e in ledger_entries}
@@ -44,7 +64,11 @@ def check_completeness(
         if not skill.covers_node_types:
             continue
         if skill.covers_node_types == ["*"]:
-            for node_type in known_node_types:
+            if skill.name == "stale_statistics":
+                node_types_to_check = _STALE_STATISTICS_REQUIRED_TYPES
+            else:
+                node_types_to_check = known_node_types
+            for node_type in node_types_to_check:
                 if (skill.name, node_type) not in ledger_pairs:
                     missing.append((skill.name, node_type))
         else:
@@ -123,6 +147,26 @@ def test_skill_with_empty_covers_node_types_is_ignored():
     skill = _make_skill("unconfigured", [])
     missing = check_completeness([skill], [])
     assert missing == []
+
+
+def test_stale_statistics_not_required_for_new_node_types():
+    """
+    stale_statistics exemption: a new node type added by another skill does NOT
+    force a stale_statistics ledger entry. The skill is verified against the
+    fixed _STALE_STATISTICS_REQUIRED_TYPES set only.
+    """
+    stale_skill = _make_skill("stale_statistics", ["*"])
+    ledger = [
+        {"skill_name": "stale_statistics", "node_type": "Seq Scan"},
+        {"skill_name": "stale_statistics", "node_type": "Index Scan"},
+        {"skill_name": "stale_statistics", "node_type": "Nested Loop"},
+        {"skill_name": "stale_statistics", "node_type": "Hash"},
+        {"skill_name": "stale_statistics", "node_type": "Sort"},
+        # Another skill introduces a brand-new node type — must NOT cascade to stale_statistics.
+        {"skill_name": "other_skill", "node_type": "Index Only Scan"},
+    ]
+    missing = check_completeness([stale_skill], ledger)
+    assert ("stale_statistics", "Index Only Scan") not in missing
 
 
 # ---------------------------------------------------------------------------

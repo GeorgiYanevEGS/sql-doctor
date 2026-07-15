@@ -105,7 +105,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 45 tests
+python -m pytest tests/ -v         # runs all 46 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -127,7 +127,7 @@ grounded fallback path when no skill matches.
 
 What's implemented: parser, 6 skills (with selectivity-, loop-, and
 spill-awareness), provider abstraction (3 backends), schema
-introspection, validator, coverage ledger, CLI wiring, 45 tests:
+introspection, validator, coverage ledger, CLI wiring, 46 tests:
 
 - **17 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
@@ -137,7 +137,7 @@ introspection, validator, coverage ledger, CLI wiring, 45 tests:
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
   (canonical ordering, VacuousTestError, assertion on skill firing).
-- **7 coverage-completeness tests** — assert every (skill, node type)
+- **8 coverage-completeness tests** — assert every (skill, node type)
   pair declared in `covers_node_types` has a corresponding ledger entry;
   closes the gap that regenerate-and-diff cannot catch.
 - **3 CLI tests** — verify `ledger-status` exit codes and output for
@@ -149,7 +149,7 @@ introspection, validator, coverage ledger, CLI wiring, 45 tests:
 
 Historical validation happened against a real database and is captured in
 fixed regression tests. CI runs on every push and pull request to main:
-the `test` job runs all 45 tests, and the `ledger-integrity` job
+the `test` job runs all 46 tests, and the `ledger-integrity` job
 regenerates the coverage ledger and diffs against the committed state to
 catch a stale ledger before merge.
 
@@ -177,6 +177,21 @@ What's next (not yet done):
   shapes are the most likely to hit format assumptions that don't hold in
   practice. Treat findings from this skill as a high-confidence hypothesis
   to verify rather than a confirmed diagnosis until live testing confirms it.
+
+- **`hash_join_disk_spill` has only been validated against synthetic
+  EXPLAIN JSON**, never against a real PostgreSQL Hash Join that actually
+  spilled to disk. The detection rule (`Hash Batches > Original Hash
+  Batches`) is the documented signal, but edge cases (e.g. does the
+  planner ever revise Original Hash Batches for reasons unrelated to spill?)
+  have not been tested live. Treat as a high-confidence hypothesis until
+  confirmed against a real spilling join.
+
+- **`sort_spill_to_disk` detection may not be exhaustive across PostgreSQL
+  versions**. The skill fires on `Sort Method == "external merge"`, which
+  is the standard disk-sort signal, but whether this is the only value
+  a disk-spilling Sort can emit has not been verified against multiple
+  PostgreSQL versions or against a real spilling sort — only against the
+  single synthetic fixture written during development.
 
 - **Validator can't yet distinguish "hallucinated existing object" from
   "proposed new object name"**. If the LLM suggests `CREATE INDEX
