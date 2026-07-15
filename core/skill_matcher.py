@@ -383,6 +383,16 @@ def _evaluate_rules(
         if matched_child.actual_rows < rules["child_min_actual_rows"]:
             return False
 
+    # Dedup noop ratio: Unique output rows / Sort input rows. A ratio >= threshold means
+    # deduplication removed almost nothing — the sorted column is nearly unique, so the
+    # sort-and-dedup work was largely wasted. Guards on matched_child.actual_rows <= 0
+    # (ratio undefined — conservative: don't fire if the sort produced no rows).
+    if "min_dedup_noop_ratio" in rules:
+        if matched_child is None or matched_child.actual_rows <= 0:
+            return False
+        if (node.actual_rows / matched_child.actual_rows) < rules["min_dedup_noop_ratio"]:
+            return False
+
     # Sort key vs index key alignment: fire only when the Sort node's sort_key is a
     # left-prefix of the index's ordered column list. Without this check, a Sort over
     # an Index Scan fires even when the sort order is completely different from the
@@ -406,6 +416,18 @@ def _evaluate_rules(
             return False
         if index_cols[:len(sort_cols)] != sort_cols:
             return False
+
+    # UNION guard: a Sort→Unique from UNION has an Append beneath the Sort (merging
+    # sub-relations), while SELECT DISTINCT has a plain scan. Suppresses the false
+    # positive where UNION's implicit dedup fires as "wasteful DISTINCT". Known trade-off:
+    # SELECT DISTINCT col FROM (a UNION ALL b) sub also produces Sort→Append and is
+    # incorrectly suppressed — accepted false-negative in exchange for the more common
+    # UNION false-positive. Fails safe (returns True, doesn't suppress) when the Sort
+    # child has no grandchild to inspect.
+    if rules.get("sort_child_not_append"):
+        if matched_child is not None and matched_child.children:
+            if matched_child.children[0].node_type == "Append":
+                return False
 
     # Build/probe row count ratio: children[1] is the Hash node (build side),
     # children[0] is the probe side. A high ratio means the planner hashed the
@@ -463,6 +485,14 @@ def _evaluate_rules(
     # "InitPlan" distinguishes from "SubPlan" (correlated, re-executed per outer row).
     if rules.get("requires_initplan_parent"):
         if node.parent_relationship != "InitPlan":
+            return False
+
+    # General parent-relationship exclusion: suppresses the skill when the node's own
+    # parent_relationship field (set by PostgreSQL on every child plan node) matches any
+    # value in the exclude list. Avoids false positives on structurally-required plan
+    # nodes that share a shape with user-driven ones — e.g. Merge Join inner-side Unique.
+    if "parent_relationship_exclude" in rules:
+        if node.parent_relationship in rules["parent_relationship_exclude"]:
             return False
 
     # InitPlan time ratio: the node's own actual_total_time as a fraction of the

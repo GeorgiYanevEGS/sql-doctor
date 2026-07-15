@@ -140,6 +140,10 @@
     "node_type": "Sort"
   },
   {
+    "skill_name": "unique_sort_noop",
+    "node_type": "Unique"
+  },
+  {
     "skill_name": "unique_without_index",
     "node_type": "Unique"
   }

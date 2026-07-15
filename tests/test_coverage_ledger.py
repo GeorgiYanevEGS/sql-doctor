@@ -1568,6 +1568,46 @@ def test_negative_modify_table_seq_scan_index_child():
     )
 
 
+def test_negative_unique_sort_noop_low_dedup_ratio():
+    """
+    Unique over Sort where dedup removes 80% of rows (ratio 0.2 < 0.9 threshold)
+    — unique_sort_noop must not fire.
+    Registers (unique_sort_noop, Unique) in the ledger.
+    """
+    assert_no_match(
+        "unique_sort_noop",
+        "Unique",
+        [{
+            "Plan": {
+                "Node Type": "Unique",
+                "Plan Rows": 200,
+                "Actual Rows": 200,
+                "Total Cost": 500.0,
+                "Actual Total Time": 45.0,
+                "Plans": [{
+                    "Node Type": "Sort",
+                    "Sort Key": ["merchant"],
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1000,
+                    "Total Cost": 450.0,
+                    "Actual Total Time": 40.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 1000,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 20.0,
+                    }],
+                }],
+            },
+            "Planning Time": 0.5,
+            "Execution Time": 45.5,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_sort_expression_no_index_plain_sort():
     """
     Sort with plain column sort key (no function call) — sort_expression_no_index

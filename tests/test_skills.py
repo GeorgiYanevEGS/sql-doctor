@@ -3974,6 +3974,145 @@ def test_no_false_positive_pruning_high_prune_ratio():
     )
 
 
+def _unique_sort_plan(
+    unique_actual_rows: int,
+    sort_actual_rows: int,
+    sort_child_node_type: str = "Seq Scan",
+    unique_parent_relationship: str | None = None,
+) -> list:
+    """Build a minimal Unique→Sort→<child> EXPLAIN fixture."""
+    child = {
+        "Node Type": sort_child_node_type,
+        "Plan Rows": sort_actual_rows,
+        "Actual Rows": sort_actual_rows,
+        "Total Cost": 200.0,
+        "Actual Total Time": 20.0,
+    }
+    if sort_child_node_type == "Seq Scan":
+        child["Relation Name"] = "transactions"
+    if sort_child_node_type == "Append":
+        child["Plans"] = [
+            {
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions_a",
+                "Parent Relationship": "Member",
+                "Plan Rows": sort_actual_rows // 2,
+                "Actual Rows": sort_actual_rows // 2,
+                "Total Cost": 100.0,
+                "Actual Total Time": 10.0,
+            },
+            {
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions_b",
+                "Parent Relationship": "Member",
+                "Plan Rows": sort_actual_rows // 2,
+                "Actual Rows": sort_actual_rows // 2,
+                "Total Cost": 100.0,
+                "Actual Total Time": 10.0,
+            },
+        ]
+    unique_node: dict = {
+        "Node Type": "Unique",
+        "Plan Rows": unique_actual_rows,
+        "Actual Rows": unique_actual_rows,
+        "Total Cost": 500.0,
+        "Actual Total Time": 45.0,
+        "Plans": [{
+            "Node Type": "Sort",
+            "Sort Key": ["merchant"],
+            "Plan Rows": sort_actual_rows,
+            "Actual Rows": sort_actual_rows,
+            "Total Cost": 450.0,
+            "Actual Total Time": 40.0,
+            "Plans": [child],
+        }],
+    }
+    if unique_parent_relationship is not None:
+        unique_node["Parent Relationship"] = unique_parent_relationship
+    return [{
+        "Plan": unique_node,
+        "Planning Time": 0.5,
+        "Execution Time": 45.5,
+    }]
+
+
+def test_unique_sort_noop():
+    """
+    Unique over Sort where 950 of 1000 sorted rows survived dedup (ratio 0.95 >= 0.9)
+    and Sort processed 1000 rows (>= child_min_actual_rows 1000) — must fire.
+    """
+    plan = parse_explain_json(_unique_sort_plan(unique_actual_rows=950, sort_actual_rows=1000))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_sort_noop" in names, (
+        f"expected unique_sort_noop for Unique/Sort with ratio 0.95 on 1000 rows, got {names}"
+    )
+
+
+def test_no_false_positive_unique_sort_noop_low_ratio():
+    """
+    Unique over Sort where only 200 of 1000 rows survived dedup (ratio 0.2 < 0.9)
+    — dedup did real work, must NOT fire.
+    """
+    plan = parse_explain_json(_unique_sort_plan(unique_actual_rows=200, sort_actual_rows=1000))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_sort_noop" not in names, (
+        f"dedup removed 80% of rows — not wasteful, must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_unique_sort_noop_small_table():
+    """
+    Unique over Sort on only 100 rows total — below child_min_actual_rows 1000,
+    must NOT fire regardless of dedup ratio.
+    """
+    plan = parse_explain_json(_unique_sort_plan(unique_actual_rows=95, sort_actual_rows=100))
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_sort_noop" not in names, (
+        f"only 100 rows sorted — below threshold, must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_unique_sort_noop_union():
+    """
+    Unique→Sort→Append shape (UNION dedup, not SELECT DISTINCT) — sort_child_not_append
+    guard must suppress the skill even though the dedup ratio is high.
+    """
+    plan = parse_explain_json(
+        _unique_sort_plan(
+            unique_actual_rows=950,
+            sort_actual_rows=1000,
+            sort_child_node_type="Append",
+        )
+    )
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_sort_noop" not in names, (
+        f"Unique→Sort→Append is UNION dedup, not SELECT DISTINCT — must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_unique_sort_noop_merge_join_inner():
+    """
+    Unique with parent_relationship='Inner' is the inner side of a Merge Join —
+    parent_relationship_exclude: ['Inner'] must suppress the skill.
+    """
+    plan = parse_explain_json(
+        _unique_sort_plan(
+            unique_actual_rows=950,
+            sort_actual_rows=1000,
+            unique_parent_relationship="Inner",
+        )
+    )
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "unique_sort_noop" not in names, (
+        f"Unique with parent_relationship='Inner' is Merge Join inner side — must not fire, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

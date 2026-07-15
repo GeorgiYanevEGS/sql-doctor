@@ -1,0 +1,33 @@
+name: unique_sort_noop
+covers_node_types: ["Unique"]
+detects:
+  node_type: "Unique"
+  child_node_type: ["Sort"]
+  child_min_actual_rows: 1000
+  min_dedup_noop_ratio: 0.9
+  sort_child_not_append: true
+  parent_relationship_exclude: ["Inner"]
+severity: medium
+explanation: >
+  A Unique node deduplicating the output of a Sort scanned at least 1,000 rows
+  and retained 90% or more of them — meaning the column is nearly unique and
+  the sort-then-deduplicate work removed almost nothing. SELECT DISTINCT on a
+  high-cardinality column forces PostgreSQL to sort the full input before
+  discarding the rare duplicates. If the goal is existence-checking rather than
+  true deduplication, EXISTS or a well-indexed lookup avoids the sort entirely.
+  If the column genuinely has near-unique values, removing the DISTINCT (if
+  semantically safe) eliminates both the sort and the dedup pass.
+fix_template: >
+  1. Confirm whether duplicates are actually possible in the result:
+       SELECT COUNT(*), COUNT(DISTINCT <col>) FROM <table> WHERE <filter>;
+     If the counts match, the DISTINCT is redundant — remove it.
+
+  2. If DISTINCT is needed to guard against duplicates from a JOIN, consider
+     restructuring the join using EXISTS or a subquery to avoid producing
+     duplicates in the first place rather than deduplicating after the fact.
+
+  3. If the column is used for membership testing, rewrite with EXISTS:
+       -- Before: SELECT DISTINCT col FROM t WHERE ...
+       -- After:  SELECT col FROM t WHERE ... AND EXISTS (SELECT 1 FROM ...)
+     or use a covering index so the planner can use Index Only Scan + Unique
+     without materializing the full sort.
