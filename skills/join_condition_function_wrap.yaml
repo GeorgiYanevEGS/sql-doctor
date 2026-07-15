@@ -1,0 +1,31 @@
+name: join_condition_function_wrap
+covers_node_types: ["Hash Join", "Merge Join"]
+detects:
+  node_type: ["Hash Join", "Merge Join"]
+  condition_pattern: "\\b(lower|upper|to_char|to_number|cast)\\s*\\("
+severity: medium
+explanation: >
+  A function call wraps one or more join key columns in this join's condition.
+  PostgreSQL cannot use an index to satisfy the join when a function is applied
+  to a join column at query time — the function result is not stored in the
+  index, only the raw column value is. This forces a full scan on at least one
+  side of the join and prevents the planner from choosing a Merge Join that
+  would exploit a pre-sorted index.
+fix_template: >
+  1) If the function is for case-insensitive comparison (LOWER/UPPER), create
+     a functional index that stores the pre-computed result:
+     CREATE INDEX CONCURRENTLY idx_{table}_lower_col ON {table} (lower(<col>));
+     Then rewrite the join condition to use the indexed expression directly.
+     Alternatively, use the citext extension (CREATE EXTENSION citext) and
+     store the column as citext — comparisons become case-insensitive by type,
+     with no function call needed at query time.
+  2) If the function is a type cast (CAST / ::), consider whether the column
+     and the join target can be stored in the same type. Mismatched types on
+     join keys are a common source of implicit casts — aligning the types
+     eliminates the cast and allows the planner to use indexes on both sides.
+  3) If the function is unavoidable (e.g. to_char for date formatting), consider
+     adding a generated column that stores the pre-computed value and indexing
+     that instead:
+     ALTER TABLE {table} ADD COLUMN col_fmt text GENERATED ALWAYS AS
+     (to_char(<col>, 'YYYY-MM-DD')) STORED;
+     CREATE INDEX ON {table} (col_fmt);

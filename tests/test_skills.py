@@ -326,21 +326,29 @@ def test_repeated_seq_scan_in_loop():
 
 def test_no_applicable_skill_for_node_type_no_skill_covers():
     """
-    A Hash Join node with no row estimate error: when stale_statistics (the
-    only skill with "*" coverage) is excluded from the skill list, a Hash
-    Join has no covering skill and must produce NO_APPLICABLE_SKILL.
+    A Bitmap Index Scan node: no skill covers this node type (not via "*" and
+    not via explicit covers_node_types). Must produce NO_APPLICABLE_SKILL.
+    Uses explicit_skills to exclude the two "*"-coverage skills (stale_statistics,
+    empty_result_bad_estimate) so only deterministic per-type coverage remains.
     """
-    # Exclude stale_statistics so no skill covers Hash Join via "*"
     explicit_skills = [s for s in SKILLS if "*" not in s.covers_node_types]
     explain_json = [
         {
             "Plan": {
-                "Node Type": "Hash Join",
-                "Relation Name": None,
+                "Node Type": "Bitmap Heap Scan",
+                "Relation Name": "transactions",
                 "Plan Rows": 100,
                 "Actual Rows": 105,
                 "Total Cost": 100.0,
                 "Actual Total Time": 5.0,
+                "Plans": [{
+                    "Node Type": "Bitmap Index Scan",
+                    "Index Name": "idx_transactions_account_id",
+                    "Plan Rows": 100,
+                    "Actual Rows": 0,
+                    "Total Cost": 4.0,
+                    "Actual Total Time": 1.0,
+                }],
             },
             "Planning Time": 0.1,
             "Execution Time": 5.1,
@@ -348,7 +356,7 @@ def test_no_applicable_skill_for_node_type_no_skill_covers():
     ]
     plan = parse_explain_json(explain_json)
     result = match_skills(plan, explicit_skills, ledger_status=LedgerStatus.OK)
-    assert result.node_type_coverage.get("Hash Join") == CoverageStatus.NO_APPLICABLE_SKILL
+    assert result.node_type_coverage.get("Bitmap Index Scan") == CoverageStatus.NO_APPLICABLE_SKILL
 
 
 def test_skill_cleared_when_skill_covers_but_does_not_fire():
@@ -1284,6 +1292,200 @@ def test_no_false_positive_index_scan_low_loops():
     assert "repeated_index_scan_in_loop" not in names, (
         f"10 loops is below threshold, should not fire, got {names}"
     )
+
+
+def test_join_condition_function_wrap_hash_join():
+    """
+    Hash Join with LOWER() wrapped around both join keys — planner can't use
+    an index on the join column. join_condition_function_wrap must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Hash Join",
+            "Hash Cond": "(lower(transactions.merchant_name) = lower(merchants.name))",
+            "Plan Rows": 5000,
+            "Actual Rows": 4800,
+            "Total Cost": 10000.0,
+            "Actual Total Time": 350.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                },
+                {
+                    "Node Type": "Hash",
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1000,
+                    "Total Cost": 100.0,
+                    "Actual Total Time": 10.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "merchants",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 1000,
+                        "Total Cost": 80.0,
+                        "Actual Total Time": 8.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 350.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "join_condition_function_wrap" in names, (
+        f"expected join_condition_function_wrap (LOWER in Hash Cond), got {names}"
+    )
+
+
+def test_join_condition_function_wrap_merge_join():
+    """
+    Merge Join with UPPER() in Merge Cond — verifies list membership check for
+    the second node_type entry and that merge_cond is in the haystack.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Merge Join",
+            "Merge Cond": "(upper(a.code) = upper(b.code))",
+            "Plan Rows": 2000,
+            "Actual Rows": 1900,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 220.0,
+            "Plans": [
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["upper(a.code)"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 256,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 2000,
+                    "Actual Rows": 2000,
+                    "Total Cost": 4000.0,
+                    "Actual Total Time": 100.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "a",
+                        "Plan Rows": 2000,
+                        "Actual Rows": 2000,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 20.0,
+                    }],
+                },
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["upper(b.code)"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 128,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 500,
+                    "Actual Rows": 500,
+                    "Total Cost": 1000.0,
+                    "Actual Total Time": 30.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "b",
+                        "Plan Rows": 500,
+                        "Actual Rows": 500,
+                        "Total Cost": 80.0,
+                        "Actual Total Time": 8.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 220.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "join_condition_function_wrap" in names, (
+        f"expected join_condition_function_wrap (UPPER in Merge Cond), got {names}"
+    )
+
+
+def test_no_false_positive_join_plain_column_condition():
+    """Hash Join with a plain column equality — no function wrap, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Hash Join",
+            "Hash Cond": "(transactions.account_id = accounts.id)",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 150.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                },
+                {
+                    "Node Type": "Hash",
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1000,
+                    "Total Cost": 100.0,
+                    "Actual Total Time": 10.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "accounts",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 1000,
+                        "Total Cost": 80.0,
+                        "Actual Total Time": 8.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 150.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "join_condition_function_wrap" not in names, (
+        f"plain column join should not fire, got {names}"
+    )
+
+
+def test_join_conditions_parsed_from_explain_json():
+    """Hash Cond and Merge Cond must be captured on their respective PlanNodes."""
+    hash_json = [{
+        "Plan": {
+            "Node Type": "Hash Join",
+            "Hash Cond": "(lower(transactions.merchant_name) = lower(merchants.name))",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 10000.0,
+            "Actual Total Time": 200.0,
+            "Plans": [
+                {"Node Type": "Seq Scan", "Relation Name": "transactions",
+                 "Plan Rows": 5000, "Actual Rows": 5000,
+                 "Total Cost": 500.0, "Actual Total Time": 50.0},
+                {"Node Type": "Hash", "Plan Rows": 1000, "Actual Rows": 1000,
+                 "Total Cost": 100.0, "Actual Total Time": 10.0,
+                 "Plans": [{"Node Type": "Seq Scan", "Relation Name": "merchants",
+                             "Plan Rows": 1000, "Actual Rows": 1000,
+                             "Total Cost": 80.0, "Actual Total Time": 8.0}]},
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 200.5,
+    }]
+    plan = parse_explain_json(hash_json)
+    node = plan.root
+    assert node.hash_cond == "(lower(transactions.merchant_name) = lower(merchants.name))", (
+        f"expected hash_cond to be set, got {node.hash_cond!r}"
+    )
+    assert node.merge_cond is None, f"expected merge_cond=None on Hash Join, got {node.merge_cond!r}"
 
 
 if __name__ == "__main__":

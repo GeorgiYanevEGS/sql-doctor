@@ -41,6 +41,11 @@ class PlanNode:
     # max_worker_processes (or max_parallel_workers) was exhausted at runtime.
     workers_planned: int | None = None
     workers_launched: int | None = None
+    # Hash Join / Merge Join only: the join condition text, e.g.
+    # "(lower(a.col) = lower(b.col))". Used to detect function wraps on join
+    # keys that prevent index use and force less efficient join strategies.
+    hash_cond: str | None = None
+    merge_cond: str | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -109,6 +114,8 @@ def _parse_node(raw: dict) -> PlanNode:
         heap_fetches=int(raw["Heap Fetches"]) if "Heap Fetches" in raw else None,
         workers_planned=int(raw["Workers Planned"]) if "Workers Planned" in raw else None,
         workers_launched=int(raw["Workers Launched"]) if "Workers Launched" in raw else None,
+        hash_cond=raw.get("Hash Cond"),
+        merge_cond=raw.get("Merge Cond"),
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

@@ -287,6 +287,130 @@ def test_negative_nested_loop_bad_plan_good_estimate():
 
 
 # ---------------------------------------------------------------------------
+# join_condition_function_wrap
+# ---------------------------------------------------------------------------
+
+
+def test_negative_join_condition_function_wrap_hash_join_plain():
+    """
+    Hash Join with a plain column equality (no function) — join_condition_function_wrap
+    must not fire.
+    Registers (join_condition_function_wrap, Hash Join) in the ledger.
+    """
+    assert_no_match(
+        "join_condition_function_wrap",
+        "Hash Join",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Hash Join",
+                    "Hash Cond": "(transactions.account_id = accounts.id)",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 8000.0,
+                    "Actual Total Time": 150.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 5000,
+                            "Actual Rows": 5000,
+                            "Total Cost": 500.0,
+                            "Actual Total Time": 50.0,
+                        },
+                        {
+                            "Node Type": "Hash",
+                            "Plan Rows": 1000,
+                            "Actual Rows": 1000,
+                            "Total Cost": 100.0,
+                            "Actual Total Time": 10.0,
+                            "Plans": [{
+                                "Node Type": "Seq Scan",
+                                "Relation Name": "accounts",
+                                "Plan Rows": 1000,
+                                "Actual Rows": 1000,
+                                "Total Cost": 80.0,
+                                "Actual Total Time": 8.0,
+                            }],
+                        },
+                    ],
+                },
+                "Planning Time": 0.3,
+                "Execution Time": 150.3,
+            }
+        ],
+        SKILLS,
+    )
+
+
+def test_negative_join_condition_function_wrap_merge_join_plain():
+    """
+    Merge Join with a plain column equality — join_condition_function_wrap
+    must not fire.
+    Registers (join_condition_function_wrap, Merge Join) in the ledger.
+    """
+    assert_no_match(
+        "join_condition_function_wrap",
+        "Merge Join",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Merge Join",
+                    "Merge Cond": "(a.id = b.a_id)",
+                    "Plan Rows": 2000,
+                    "Actual Rows": 2000,
+                    "Total Cost": 6000.0,
+                    "Actual Total Time": 120.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Sort",
+                            "Sort Key": ["a.id"],
+                            "Sort Method": "quicksort",
+                            "Sort Space Used": 256,
+                            "Sort Space Type": "Memory",
+                            "Plan Rows": 2000,
+                            "Actual Rows": 2000,
+                            "Total Cost": 3000.0,
+                            "Actual Total Time": 60.0,
+                            "Plans": [{
+                                "Node Type": "Seq Scan",
+                                "Relation Name": "a",
+                                "Plan Rows": 2000,
+                                "Actual Rows": 2000,
+                                "Total Cost": 200.0,
+                                "Actual Total Time": 20.0,
+                            }],
+                        },
+                        {
+                            "Node Type": "Sort",
+                            "Sort Key": ["b.a_id"],
+                            "Sort Method": "quicksort",
+                            "Sort Space Used": 128,
+                            "Sort Space Type": "Memory",
+                            "Plan Rows": 500,
+                            "Actual Rows": 500,
+                            "Total Cost": 1000.0,
+                            "Actual Total Time": 25.0,
+                            "Plans": [{
+                                "Node Type": "Seq Scan",
+                                "Relation Name": "b",
+                                "Plan Rows": 500,
+                                "Actual Rows": 500,
+                                "Total Cost": 80.0,
+                                "Actual Total Time": 8.0,
+                            }],
+                        },
+                    ],
+                },
+                "Planning Time": 0.3,
+                "Execution Time": 120.3,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # repeated_index_scan_in_loop
 # ---------------------------------------------------------------------------
 

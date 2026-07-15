@@ -145,7 +145,8 @@ class Skill:
 
         if "condition_pattern" in rules:
             haystack = " ".join(
-                filter(None, [node.filter_condition, node.index_condition])
+                filter(None, [node.filter_condition, node.index_condition,
+                               node.hash_cond, node.merge_cond])
             )
             if not haystack:
                 return False

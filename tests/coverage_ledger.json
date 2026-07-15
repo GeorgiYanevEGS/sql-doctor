@@ -32,6 +32,14 @@
     "node_type": "Index Only Scan"
   },
   {
+    "skill_name": "join_condition_function_wrap",
+    "node_type": "Hash Join"
+  },
+  {
+    "skill_name": "join_condition_function_wrap",
+    "node_type": "Merge Join"
+  },
+  {
     "skill_name": "missing_index",
     "node_type": "Seq Scan"
   },
