@@ -60,6 +60,10 @@ class PlanNode:
     strategy: str | None = None
     hash_agg_batches: int | None = None
     disk_usage_kb: int | None = None
+    # Set on child nodes by PostgreSQL to describe the relationship to the parent plan
+    # node. Key value: "SubPlan" identifies a correlated subquery node — one that is
+    # re-executed once per outer row rather than once per plan.
+    parent_relationship: str | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -145,6 +149,7 @@ def _parse_node(raw: dict) -> PlanNode:
         strategy=raw.get("Strategy"),
         hash_agg_batches=int(raw["HashAgg Batches"]) if "HashAgg Batches" in raw else None,
         disk_usage_kb=int(raw["Disk Usage"]) if "Disk Usage" in raw else None,
+        parent_relationship=raw.get("Parent Relationship"),
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

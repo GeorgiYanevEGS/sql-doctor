@@ -1,0 +1,48 @@
+name: subplan_per_row_execution
+# covers_node_types is intentionally empty: SubPlan nodes can be any node type
+# (Seq Scan, Index Scan, Aggregate, etc.) depending on the subquery's shape.
+# Coverage is not tracked per node type for this skill — the false-positive
+# guards live in tests/test_skills.py instead.
+covers_node_types: []
+detects:
+  requires_subplan_parent: true
+  min_actual_loops: 50
+severity: high
+explanation: >
+  A correlated subquery is being re-evaluated once per outer row: this SubPlan
+  node executed dozens, hundreds, or thousands of times. Every outer row triggers
+  a full re-run of the subquery, making it functionally identical to the N+1
+  problem in application code — except it happens inside a single SQL statement
+  where it is easy to miss. Confirmed against a real banking-style schema: a
+  correlated merchants lookup ran at 204ms with the inner table scanned 53,425
+  times; the equivalent rewritten as an explicit JOIN ran at 34ms — a ~6x
+  improvement from this pattern alone.
+fix_template: >
+  Rewrite the correlated subquery as an explicit JOIN so the planner can choose
+  a Hash Join or Merge Join, which scans the subquery's table once rather than
+  once per outer row:
+
+    -- Before: correlated subquery (inner table re-scanned per outer row)
+    SELECT t.*,
+           (SELECT SUM(m.fee) FROM merchants m WHERE m.id = t.merchant_id)
+    FROM transactions t;
+
+    -- After: explicit JOIN (merchants scanned once, planner picks join strategy)
+    SELECT t.*, COALESCE(agg.total_fee, 0)
+    FROM transactions t
+    LEFT JOIN (
+        SELECT id, SUM(fee) AS total_fee FROM merchants GROUP BY id
+    ) agg ON agg.id = t.merchant_id;
+
+  For existence checks, use a semi-join instead of a correlated EXISTS when the
+  planner is not flattening it automatically:
+
+    -- Semi-join (optimizer often flattens correlated EXISTS already — verify
+    --  first with EXPLAIN whether flattening already happened)
+    SELECT t.* FROM transactions t
+    JOIN flagged_merchants fm ON fm.id = t.merchant_id;
+
+  If the subquery cannot be rewritten immediately, verify with EXPLAIN whether
+  the planner missed a semi-join flattening opportunity by restructuring the
+  subquery to remove the outer column reference — some cases flatten
+  automatically once the correlation is eliminated.

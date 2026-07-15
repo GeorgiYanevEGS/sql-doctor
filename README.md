@@ -103,7 +103,8 @@ sql-doctor/
 │   ├── function_scan_bad_estimate.yaml
 │   ├── bitmap_heap_lossy.yaml
 │   ├── planning_time_dominates.yaml
-│   └── hash_aggregate_disk_spill.yaml
+│   ├── hash_aggregate_disk_spill.yaml
+│   └── subplan_per_row_execution.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -117,7 +118,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 106 tests
+python -m pytest tests/ -v         # runs all 110 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -137,14 +138,14 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 18 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 19 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
 join-condition-, build-probe-imbalance-, function-scan-cardinality-,
-bitmap-lossy-page-, planning-time-dominance-, and hash-aggregate-disk-spill-
-awareness), provider abstraction (3 backends), schema introspection, validator,
-coverage ledger, CLI wiring, 106 tests:
+bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-, and
+correlated-subplan-awareness), provider abstraction (3 backends), schema
+introspection, validator, coverage ledger, CLI wiring, 110 tests:
 
-- **57 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **61 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
 - **30 negative tests** — each proves a specific (skill, node type) pair

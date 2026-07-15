@@ -276,6 +276,14 @@ class Skill:
             if node.workers_launched >= node.workers_planned:
                 return False
 
+        # Correlated subplan: the node is the root of a SubPlan re-executed once per
+        # outer row. "SubPlan" distinguishes from Nested Loop inner children ("Inner")
+        # and Append members ("Member") — all of which also have high actual_loops but
+        # different root causes and different fixes.
+        if rules.get("requires_subplan_parent"):
+            if node.parent_relationship != "SubPlan":
+                return False
+
         return True
 
     def matches_plan(self, plan: ParsedPlan) -> bool:

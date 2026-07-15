@@ -1960,6 +1960,161 @@ def test_no_false_positive_function_scan_accurate_estimate():
     )
 
 
+def test_parse_parent_relationship():
+    """
+    SubPlan node carries 'Parent Relationship': 'SubPlan' in EXPLAIN JSON.
+    Must be captured on PlanNode.parent_relationship; outer node must be None.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 53425,
+            "Actual Rows": 53425,
+            "Total Cost": 4600.0,
+            "Actual Total Time": 204000.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "merchants",
+                "Parent Relationship": "SubPlan",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 15.5,
+                "Actual Total Time": 3.5,
+                "Actual Loops": 53425,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 204000.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    outer = plan.root
+    inner = outer.children[0]
+    assert outer.parent_relationship is None, (
+        f"root node should have parent_relationship=None, got {outer.parent_relationship!r}"
+    )
+    assert inner.parent_relationship == "SubPlan", (
+        f"expected parent_relationship='SubPlan', got {inner.parent_relationship!r}"
+    )
+
+
+def test_subplan_per_row_execution():
+    """
+    Correlated subquery: merchants Seq Scan runs 53425 times as a SubPlan — one
+    execution per outer transactions row, no Nested Loop in the plan.
+    subplan_per_row_execution must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 53425,
+            "Actual Rows": 53425,
+            "Total Cost": 4600.0,
+            "Actual Total Time": 204000.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "merchants",
+                "Parent Relationship": "SubPlan",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 15.5,
+                "Actual Total Time": 3.5,
+                "Actual Loops": 53425,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 204000.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "subplan_per_row_execution" in names, (
+        f"expected subplan_per_row_execution (53425 loops), got {names}"
+    )
+
+
+def test_no_false_positive_subplan_single_loop():
+    """
+    SubPlan executed only once (non-correlated or planner-flattened) — must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 4600.0,
+            "Actual Total Time": 25.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "merchants",
+                "Parent Relationship": "SubPlan",
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 80.0,
+                "Actual Total Time": 5.0,
+                "Actual Loops": 1,
+            }],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 25.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "subplan_per_row_execution" not in names, (
+        f"SubPlan with loops=1 should not fire, got {names}"
+    )
+
+
+def test_no_false_positive_nested_loop_inner_high_loops():
+    """
+    Nested Loop inner Seq Scan with many loops: parent_relationship is 'Inner',
+    not 'SubPlan'. subplan_per_row_execution must not fire (repeated_seq_scan_in_loop
+    may fire separately — that's expected and correct).
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Nested Loop",
+            "Plan Rows": 53425,
+            "Actual Rows": 53425,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 210000.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 53425,
+                    "Actual Rows": 53425,
+                    "Total Cost": 4600.0,
+                    "Actual Total Time": 180000.0,
+                    "Actual Loops": 1,
+                },
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "merchants",
+                    "Parent Relationship": "Inner",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 15.5,
+                    "Actual Total Time": 3.5,
+                    "Actual Loops": 53425,
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 210000.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "subplan_per_row_execution" not in names, (
+        f"NL inner child (parent_relationship='Inner') must not fire as subplan, got {names}"
+    )
+
+
 def test_parse_hash_agg_fields():
     """Aggregate node with Strategy=Hashed, HashAgg Batches, Disk Usage are parsed correctly."""
     explain_json = [{
