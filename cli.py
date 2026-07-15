@@ -71,14 +71,30 @@ def analyze(
     typer.echo("\n--- Running deterministic skill checks (no LLM) ---")
     loaded = load_skills(ledger_path=DEFAULT_LEDGER_PATH)
     table_row_counts = get_table_row_counts(conn, plan.tables_referenced())
-    diagnosis = match_skills(plan, loaded.skills, table_row_counts, ledger_status=loaded.ledger_status)
+    # Schema introspection runs unconditionally — required for schema-dependent skill
+    # predicates (e.g. requires_schema_context). This adds one extra DB round-trip
+    # (3 catalog queries per referenced table: columns, indexes, row estimate) on every
+    # analyze call, regardless of whether a skill match is found or the LLM fallback is
+    # triggered. Cost: low for catalog queries (~1–5ms per table on a warm server), but
+    # non-zero — measure with `time cli.py analyze ...` against your own instance to
+    # quantify before deploying to high-frequency callers.
+    typer.echo("Introspecting table schemas for schema-dependent skill checks...")
+    schemas = introspect_query_tables(conn, plan.tables_referenced(), schema=schema)
+    conn.close()
+
+    diagnosis = match_skills(
+        plan,
+        loaded.skills,
+        table_row_counts,
+        ledger_status=loaded.ledger_status,
+        schema_context=schemas,
+    )
 
     if diagnosis.matches:
         for m in diagnosis.matches:
             typer.secho(f"\n[{m.severity.upper()}] {m.skill_name}", fg=typer.colors.YELLOW, bold=True)
             typer.echo(m.explanation)
             typer.echo(f"Suggested fix:\n{m.fix_template}")
-        conn.close()
         return
 
     coverage = diagnosis.node_type_coverage
@@ -108,13 +124,10 @@ def analyze(
             "No LLM provider configured — re-run with --llm-provider "
             "ollama|claude|azure-openai for an AI-assisted hypothesis."
         )
-        conn.close()
         return
 
     typer.echo(f"\n--- Falling back to LLM ({llm_provider}), grounded in real schema ---")
-    tables = plan.tables_referenced()
-    schemas = introspect_query_tables(conn, tables, schema=schema)
-    conn.close()
+    # schemas already introspected above — no second round-trip needed.
 
     prompt = build_grounded_prompt(query, plan.summary(), schemas)
 

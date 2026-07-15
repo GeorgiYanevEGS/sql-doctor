@@ -123,7 +123,7 @@ sql-doctor/
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v         # runs all 133 tests
+python -m pytest tests/ -v         # runs all 134 tests
 python cli.py list-skills          # prints the loaded skill library
 ```
 
@@ -151,9 +151,9 @@ correlated-subplan-awareness, sort-expression-awareness,
 unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness, and
 bitmap-or-branch-awareness), provider abstraction (3 backends), schema
-introspection, validator, coverage ledger, CLI wiring, 133 tests:
+introspection, validator, coverage ledger, CLI wiring, 134 tests:
 
-- **78 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **79 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
 - **35 negative tests** — each proves a specific (skill, node type) pair

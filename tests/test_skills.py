@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.explain_parser import parse_explain_json
-from core.schema_introspect import TableSchema
+from core.schema_introspect import ColumnInfo, IndexInfo, TableSchema
 from core.skill_matcher import CoverageStatus, LedgerStatus, Skill, load_skills, match_skills
 
 _loaded = load_skills()
@@ -2974,6 +2974,81 @@ def test_no_false_positive_sort_plain_column():
     names = {m.skill_name for m in result.matches}
     assert "sort_expression_no_index" not in names, (
         f"plain column sort key should not fire sort_expression_no_index, got {names}"
+    )
+
+
+def test_schema_context_threads_through_match_skills():
+    """
+    Integration test: schema_context flows from match_skills() through
+    matches_node() into _evaluate_rules() and reaches the predicate with
+    real TableSchema data — not just that the parameter compiles.
+
+    Uses a skill with requires_schema_context: true as the observable:
+    - With schema_context containing a real TableSchema, the skill fires.
+    - With schema_context=None, the skill abstains.
+
+    This is the contract that makes the cli.py wiring meaningful: what
+    introspect_query_tables() returns must reach the predicate unchanged.
+    """
+    schema_skill = Skill(
+        name="test_schema_chain",
+        description="",
+        detects={"node_type": "Seq Scan", "requires_schema_context": True},
+        severity="medium",
+        explanation="",
+        fix_template="",
+        covers_node_types=["Seq Scan"],
+    )
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 320.0,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 320.3,
+    }]
+    plan = parse_explain_json(explain_json)
+
+    # A real TableSchema object — the same type introspect_query_tables() returns.
+    # Populated with actual columns and an index, not just an empty placeholder.
+    real_schema: dict[str, TableSchema] = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            columns=[
+                ColumnInfo(name="id", data_type="integer"),
+                ColumnInfo(name="account_id", data_type="integer"),
+                ColumnInfo(name="amount", data_type="numeric"),
+            ],
+            indexes=[
+                IndexInfo(
+                    name="idx_transactions_account_id",
+                    definition="CREATE INDEX idx_transactions_account_id ON public.transactions USING btree (account_id)",
+                ),
+            ],
+            row_estimate=200000,
+        )
+    }
+
+    # With real schema_context: gate passes, skill fires on the Seq Scan node.
+    result_with = match_skills(
+        plan, [schema_skill], ledger_status=LedgerStatus.OK, schema_context=real_schema
+    )
+    assert any(m.skill_name == "test_schema_chain" for m in result_with.matches), (
+        "schema_context with real TableSchema data must reach the predicate via "
+        "match_skills → matches_node → _evaluate_rules"
+    )
+
+    # With schema_context=None: gate abstains, skill does not fire.
+    result_without = match_skills(
+        plan, [schema_skill], ledger_status=LedgerStatus.OK, schema_context=None
+    )
+    assert not any(m.skill_name == "test_schema_chain" for m in result_without.matches), (
+        "schema_context=None must cause the skill to abstain, even when match_skills "
+        "receives a plan that would otherwise match"
     )
 
 
