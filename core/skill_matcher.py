@@ -38,6 +38,11 @@ class CoverageStatus(Enum):
     SKILL_CLEARED = "skill_cleared"
     NO_APPLICABLE_SKILL = "no_applicable_skill"
     UNVERIFIED = "unverified"
+    # A skill that requires schema context covered this node type, but schema_context
+    # was None (offline mode / no DB connection). The skill abstained rather than
+    # firing. Distinct from SKILL_CLEARED (which means "examined and cleared") and
+    # from NO_APPLICABLE_SKILL (which means "no skill claims this node type at all").
+    SCHEMA_UNAVAILABLE = "schema_unavailable"
 
 
 class LedgerStatus(Enum):
@@ -531,8 +536,9 @@ def match_skills(
 ) -> DiagnosisResult:
     matches: list[SkillMatch] = []
     ever_matched: set[str] = set()
-    covered_verified: set[str] = set()    # covered by a verified skill, didn't fire
-    covered_unverified: set[str] = set()  # covered only by unverified skills, didn't fire
+    covered_verified: set[str] = set()      # covered by a verified skill, didn't fire
+    covered_unverified: set[str] = set()    # covered only by unverified skills, didn't fire
+    schema_abstained: set[str] = set()      # schema-dependent skill would cover but schema_context is None
 
     # Plan-level skills: evaluated once per plan, not per node.
     for skill in skills:
@@ -572,7 +578,12 @@ def match_skills(
                 if skill.scope == "plan":
                     continue
                 if skill.covers(node.node_type):
-                    if skill.is_verified_for(node.node_type):
+                    if schema_context is None and skill.detects.get("requires_schema_context"):
+                        # Skill would cover this node type but abstained — no schema available.
+                        # Only mark schema_abstained if no non-schema skill also covers it;
+                        # that check happens during coverage assignment below.
+                        schema_abstained.add(node.node_type)
+                    elif skill.is_verified_for(node.node_type):
                         covered_verified.add(node.node_type)
                     else:
                         covered_unverified.add(node.node_type)
@@ -586,6 +597,11 @@ def match_skills(
             node_type_coverage[node_type] = CoverageStatus.SKILL_CLEARED
         elif node_type in covered_unverified:
             node_type_coverage[node_type] = CoverageStatus.UNVERIFIED
+        elif node_type in schema_abstained:
+            # Only schema-dependent skills cover this node type, and schema was absent.
+            # Non-schema coverage (covered_verified / covered_unverified) takes priority
+            # above — reaching here means no non-schema skill claimed coverage.
+            node_type_coverage[node_type] = CoverageStatus.SCHEMA_UNAVAILABLE
         else:
             node_type_coverage[node_type] = CoverageStatus.NO_APPLICABLE_SKILL
 

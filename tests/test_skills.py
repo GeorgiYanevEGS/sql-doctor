@@ -3391,6 +3391,44 @@ def test_schema_context_gate_passes_when_provided():
     )
 
 
+def test_schema_unavailable_coverage_status():
+    """
+    A schema-dependent skill covering a node type, called with schema_context=None,
+    must produce SCHEMA_UNAVAILABLE for that node type — not SKILL_CLEARED or
+    NO_APPLICABLE_SKILL. Proves the coverage status distinguishes 'abstained
+    because no schema was available' from 'examined and cleared'.
+    """
+    schema_dep_skill = Skill(
+        name="test_schema_dep_coverage",
+        description="",
+        detects={"node_type": "Sort", "requires_schema_context": True},
+        severity="medium",
+        explanation="",
+        fix_template="",
+        covers_node_types=["Sort"],
+    )
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["x"],
+            "Plan Rows": 100,
+            "Actual Rows": 100,
+            "Total Cost": 100.0,
+            "Actual Total Time": 10.0,
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 10.1,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(
+        plan, [schema_dep_skill], ledger_status=LedgerStatus.OK, schema_context=None
+    )
+    assert result.node_type_coverage.get("Sort") == CoverageStatus.SCHEMA_UNAVAILABLE, (
+        f"expected SCHEMA_UNAVAILABLE for schema-dependent skill with no schema_context, "
+        f"got {result.node_type_coverage}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

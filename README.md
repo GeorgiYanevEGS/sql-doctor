@@ -152,9 +152,9 @@ unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness,
 bitmap-or-branch-awareness, and schema-verified-redundant-sort-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 140 tests:
+ledger, CLI wiring, 143 tests:
 
-- **85 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **86 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
 - **35 negative tests** — each proves a specific (skill, node type) pair
@@ -162,7 +162,7 @@ ledger, CLI wiring, 140 tests:
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself
   (canonical ordering, VacuousTestError, assertion on skill firing).
-- **9 coverage-completeness tests** — assert every (skill, node type)
+- **11 coverage-completeness tests** — assert every (skill, node type)
   pair declared in `covers_node_types` has a corresponding ledger entry;
   closes the gap that regenerate-and-diff cannot catch. Includes a test
   that a bare `covers_node_types: []` without `covers_all_node_types_exempt:

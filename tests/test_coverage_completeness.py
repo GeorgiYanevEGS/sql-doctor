@@ -69,6 +69,11 @@ def check_completeness(
             if not skill.covers_all_node_types_exempt:
                 missing.append((skill.name, "<covers_all_node_types_exempt: true required>"))
             continue
+        # Schema-dependent skills abstain (SCHEMA_UNAVAILABLE) when schema_context is None.
+        # SCHEMA_UNAVAILABLE coverage does not require a ledger entry — only SKILL_CLEARED
+        # claims do. Skip the ledger requirement for these skills entirely.
+        if skill.detects.get("requires_schema_context"):
+            continue
         if skill.covers_node_types == ["*"]:
             if skill.name in _FIXED_COVERAGE_STAR_SKILLS:
                 node_types_to_check = _REPRESENTATIVE_TYPES
@@ -89,11 +94,17 @@ def check_completeness(
 # ---------------------------------------------------------------------------
 
 
-def _make_skill(name: str, covers: list[str], *, exempt: bool = False) -> Skill:
+def _make_skill(
+    name: str,
+    covers: list[str],
+    *,
+    exempt: bool = False,
+    detects: dict | None = None,
+) -> Skill:
     return Skill(
         name=name,
         description="",
-        detects={},
+        detects=detects or {},
         severity="high",
         explanation="",
         fix_template="",
@@ -189,6 +200,28 @@ def test_fixed_coverage_star_skills_not_required_for_new_node_types():
     missing = check_completeness([stale_skill, empty_skill], ledger)
     assert ("stale_statistics", "Index Only Scan") not in missing
     assert ("empty_result_bad_estimate", "Index Only Scan") not in missing
+
+
+def test_schema_dependent_skill_exempt_from_ledger_requirement():
+    """
+    A skill with requires_schema_context: true is exempt from ledger entry
+    requirements — it produces SCHEMA_UNAVAILABLE (abstain), not SKILL_CLEARED,
+    so no ledger entry backs its coverage claims.
+    """
+    skill = _make_skill(
+        "schema_skill", ["Sort"], detects={"requires_schema_context": True}
+    )
+    missing = check_completeness([skill], [])
+    assert ("schema_skill", "Sort") not in missing, (
+        f"schema-dependent skill must not require ledger entries, got {missing}"
+    )
+
+
+def test_non_schema_dependent_skill_still_requires_ledger():
+    """Exemption is narrow — a regular skill without requires_schema_context still needs ledger entries."""
+    skill = _make_skill("regular_skill", ["Sort"])
+    missing = check_completeness([skill], [])
+    assert ("regular_skill", "Sort") in missing
 
 
 # ---------------------------------------------------------------------------
