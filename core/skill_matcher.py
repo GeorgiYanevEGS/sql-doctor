@@ -221,9 +221,13 @@ class Skill:
         # Child node type predicate: the node must have at least one immediate child
         # whose node_type appears in the allowed list. Enables parent-looks-down-at-child
         # pattern detection without needing a child-to-parent backreference.
+        matched_child: PlanNode | None = None
         if "child_node_type" in rules:
             allowed = rules["child_node_type"]
-            if not any(c.node_type in allowed for c in node.children):
+            matched_child = next(  # first match only — if multiple children satisfy child_node_type, later matches are silently ignored
+                (c for c in node.children if c.node_type in allowed), None
+            )
+            if matched_child is None:
                 return False
 
         # Build/probe row count ratio: children[1] is the Hash node (build side),
