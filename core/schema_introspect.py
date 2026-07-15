@@ -111,6 +111,47 @@ def introspect_table(conn, table_name: str, schema: str = "public") -> TableSche
         row = cur.fetchone()
         result.row_estimate = int(row[0]) if row else None
 
+        # Path A: this table is itself the partitioned parent.
+        cur.execute(
+            """
+            SELECT a.attname
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_partitioned_table pt ON pt.partrelid = c.oid
+            CROSS JOIN LATERAL unnest(
+                string_to_array(pt.partattrs::text, ' ')::smallint[]
+            ) WITH ORDINALITY u(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum
+            WHERE n.nspname = %s AND c.relname = %s
+            ORDER BY u.ord
+            """,
+            (schema, table_name),
+        )
+        pk_rows = cur.fetchall()
+
+        if not pk_rows:
+            # Path B: this table is a partition child — resolve via pg_inherits.
+            cur.execute(
+                """
+                SELECT a.attname
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_inherits i ON i.inhrelid = c.oid
+                JOIN pg_partitioned_table pt ON pt.partrelid = i.inhparent
+                CROSS JOIN LATERAL unnest(
+                    string_to_array(pt.partattrs::text, ' ')::smallint[]
+                ) WITH ORDINALITY u(attnum, ord)
+                JOIN pg_attribute a
+                    ON a.attrelid = i.inhparent AND a.attnum = u.attnum
+                WHERE n.nspname = %s AND c.relname = %s
+                ORDER BY u.ord
+                """,
+                (schema, table_name),
+            )
+            pk_rows = cur.fetchall()
+
+        result.partition_key = [r[0] for r in pk_rows] if pk_rows else None
+
     return result
 
 

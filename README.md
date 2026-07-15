@@ -156,7 +156,7 @@ bitmap-or-branch-awareness, schema-verified-redundant-sort-awareness,
 modify-table-unindexed-scan-awareness, and
 partition-pruning-failure-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 156 tests:
+ledger, CLI wiring, 159 tests:
 
 - **98 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
@@ -173,8 +173,10 @@ ledger, CLI wiring, 156 tests:
   true` fails by name rather than silently passing.
 - **3 CLI tests** — verify `ledger-status` exit codes and output for
   OK, MISSING, and CORRUPT ledger states.
-- **1 integration test** — loads the real committed ledger and confirms
-  it authorizes the current skill set without errors.
+- **4 integration tests** — 1 loads the real committed ledger and confirms
+  it authorizes the current skill set; 3 verify `introspect_table()` returns
+  correct `partition_key` for partitioned parent, partition child, and
+  non-partitioned tables (skip when `SQLDOCTOR_TEST_DSN` not set).
 - **1 README meta-test** — asserts this test count matches `pytest
   --collect-only`; prevents the count from silently drifting again.
 
