@@ -1,0 +1,19 @@
+name: index_only_scan_heap_fetches
+covers_node_types: ["Index Only Scan"]
+detects:
+  node_type: "Index Only Scan"
+  min_heap_fetch_ratio: 0.5
+  min_actual_rows: 100
+severity: medium
+explanation: >
+  The Index Only Scan had to visit the heap for more than half its result rows
+  because the visibility map was not up to date. When heap fetches approach
+  actual row count, the scan provides little benefit over a regular Index Scan —
+  the extra overhead of checking the visibility map is paid without saving the
+  heap I/O it's meant to avoid.
+fix_template: >
+  1) Run VACUUM on {table} to refresh the visibility map so future scans
+     can use it. For frequently updated tables, tune autovacuum to run more
+     aggressively (autovacuum_vacuum_scale_factor, autovacuum_vacuum_cost_delay).
+  2) If heap fetches remain high after VACUUM, the table may have too many
+     dead tuples — consider VACUUM ANALYZE {table} to both clean and refresh statistics.

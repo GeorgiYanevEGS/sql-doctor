@@ -28,6 +28,10 @@
     "node_type": "Seq Scan"
   },
   {
+    "skill_name": "index_only_scan_heap_fetches",
+    "node_type": "Index Only Scan"
+  },
+  {
     "skill_name": "missing_index",
     "node_type": "Seq Scan"
   },

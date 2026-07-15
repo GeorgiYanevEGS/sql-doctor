@@ -197,6 +197,41 @@ def test_negative_empty_result_bad_estimate_accurate_sort():
 
 
 # ---------------------------------------------------------------------------
+# index_only_scan_heap_fetches
+# ---------------------------------------------------------------------------
+
+
+def test_negative_index_only_scan_heap_fetches_low_ratio():
+    """
+    Index Only Scan with heap_fetches << actual_rows (ratio = 1%): visibility
+    map is working, no problem. index_only_scan_heap_fetches must not fire.
+    Registers (index_only_scan_heap_fetches, Index Only Scan) in the ledger.
+    """
+    assert_no_match(
+        "index_only_scan_heap_fetches",
+        "Index Only Scan",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Index Only Scan",
+                    "Relation Name": "transactions",
+                    "Index Name": "idx_transactions_account_id",
+                    "Index Cond": "(account_id = 42)",
+                    "Heap Fetches": 10,
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1000,
+                    "Total Cost": 200.0,
+                    "Actual Total Time": 8.0,
+                },
+                "Planning Time": 0.2,
+                "Execution Time": 8.2,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # missing_index
 # ---------------------------------------------------------------------------
 

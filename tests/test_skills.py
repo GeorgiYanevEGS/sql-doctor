@@ -674,6 +674,105 @@ def test_no_false_positive_empty_result_ratio_too_high():
     )
 
 
+def test_heap_fetches_parsed_from_explain_json():
+    """Heap Fetches from EXPLAIN JSON must be captured on PlanNode.heap_fetches."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Index Only Scan",
+            "Relation Name": "transactions",
+            "Index Name": "idx_transactions_account_id",
+            "Index Cond": "(account_id = 42)",
+            "Heap Fetches": 4823,
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 200.0,
+            "Actual Total Time": 45.0,
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 45.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    node = plan.root
+    assert node.heap_fetches == 4823, (
+        f"expected heap_fetches=4823, got {node.heap_fetches!r}"
+    )
+
+
+def test_index_only_scan_heap_fetches():
+    """Index Only Scan with heap_fetches > 50% of actual_rows — must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Index Only Scan",
+            "Relation Name": "transactions",
+            "Index Name": "idx_transactions_account_id",
+            "Index Cond": "(account_id = 42)",
+            "Heap Fetches": 4823,
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 200.0,
+            "Actual Total Time": 45.0,
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 45.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "index_only_scan_heap_fetches" in names, (
+        f"expected index_only_scan_heap_fetches, got {names}"
+    )
+
+
+def test_no_false_positive_heap_fetches_low_ratio():
+    """Index Only Scan with few heap fetches relative to rows — well below threshold."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Index Only Scan",
+            "Relation Name": "transactions",
+            "Index Name": "idx_transactions_account_id",
+            "Index Cond": "(account_id = 42)",
+            "Heap Fetches": 50,
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 200.0,
+            "Actual Total Time": 10.0,
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 10.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "index_only_scan_heap_fetches" not in names, (
+        f"low ratio (50/5000=1%) should not fire, got {names}"
+    )
+
+
+def test_no_false_positive_heap_fetches_zero():
+    """Index Only Scan with zero heap fetches — visibility map fully covered."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Index Only Scan",
+            "Relation Name": "transactions",
+            "Index Name": "idx_transactions_account_id",
+            "Index Cond": "(account_id = 42)",
+            "Heap Fetches": 0,
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 180.0,
+            "Actual Total Time": 8.0,
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 8.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "index_only_scan_heap_fetches" not in names, (
+        f"zero heap fetches should not fire, got {names}"
+    )
+
+
 def test_sort_key_parsed_from_explain_json():
     """Sort Key array from EXPLAIN JSON must be captured on PlanNode.sort_key."""
     explain_json = [{

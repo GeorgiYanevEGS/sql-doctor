@@ -32,6 +32,10 @@ class PlanNode:
     # Sort Key array, e.g. ["created_at DESC", "id"]. Used by skills comparing
     # sort order against an underlying index's output order.
     sort_key: list[str] = field(default_factory=list)
+    # Index Only Scan only: number of rows that required a heap visit because the
+    # visibility map didn't mark the page as all-visible. High values mean the
+    # scan degrades toward a regular Index Scan in practice.
+    heap_fetches: int | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -97,6 +101,7 @@ def _parse_node(raw: dict) -> PlanNode:
         sort_method=raw.get("Sort Method"),
         sort_space_type=raw.get("Sort Space Type"),
         sort_key=list(raw.get("Sort Key", [])),
+        heap_fetches=int(raw["Heap Fetches"]) if "Heap Fetches" in raw else None,
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

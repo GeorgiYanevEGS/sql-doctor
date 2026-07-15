@@ -176,6 +176,17 @@ class Skill:
             if node.sort_method != "external merge":
                 return False
 
+        # Index Only Scan heap fetch ratio: heap_fetches / actual_rows above the
+        # threshold means most rows required a heap visit, defeating the scan's
+        # purpose. actual_rows == 0 is skipped (ratio undefined).
+        if "min_heap_fetch_ratio" in rules:
+            if node.heap_fetches is None:
+                return False
+            if node.actual_rows <= 0:
+                return False
+            if (node.heap_fetches / node.actual_rows) < rules["min_heap_fetch_ratio"]:
+                return False
+
         # Child node type predicate: the node must have at least one immediate child
         # whose node_type appears in the allowed list. Enables parent-looks-down-at-child
         # pattern detection without needing a child-to-parent backreference.
