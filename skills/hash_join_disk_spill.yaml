@@ -11,6 +11,11 @@ explanation: >
   multiple batches. Every additional batch requires re-reading the probe side,
   multiplying I/O by the number of batches.
 fix_template: >
+  Note: if hash_join_build_probe_imbalance also fired on this node, address the
+  row-estimate issue first — increasing work_mem alone may mask rather than fix
+  the underlying cause (the planner hashed the wrong side due to a bad estimate,
+  and that same bad estimate likely undersized work_mem allocation too).
+
   1) Increase work_mem for this session: SET work_mem = '256MB';
   2) Run ANALYZE on the build-side table if the planner row estimate was wrong.
   3) If the table is permanently large, consider a permanent postgresql.conf increase.

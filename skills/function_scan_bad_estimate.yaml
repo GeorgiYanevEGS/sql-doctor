@@ -1,0 +1,31 @@
+name: function_scan_bad_estimate
+covers_node_types: ["Function Scan"]
+detects:
+  node_type: "Function Scan"
+  min_row_estimate_error_ratio: 10.0
+severity: medium
+explanation: >
+  The planner's row estimate for this set-returning function was badly wrong
+  (actual rows diverged from the estimate by 10x or more). PostgreSQL defaults
+  to a flat estimate of 1000 rows for set-returning functions unless told
+  otherwise — ANALYZE cannot fix this because pg_statistic does not track
+  function output cardinality. A bad estimate here causes the planner to
+  choose the wrong join strategy for any join that consumes this function's
+  output.
+fix_template: >
+  The fix is not ANALYZE — table statistics don't cover function output
+  cardinality. Instead, add an explicit row estimate hint to the function
+  definition so the planner knows what to expect:
+
+  ALTER FUNCTION {table}(...) ROWS 100000;
+
+  Replace 100000 with the realistic expected row count from a representative
+  call. If the cardinality varies widely across calls, consider:
+  1) Rewriting the function as a view or CTE so the planner can estimate it
+     directly from the underlying tables.
+  2) Using a MATERIALIZED CTE (WITH ... AS MATERIALIZED) to force the
+     planner to evaluate the subquery independently and use its actual row
+     count for the outer query.
+  3) If using PostgreSQL 14+, the function can be marked with SUPPORT to
+     provide a planner support function that estimates cardinality
+     dynamically based on the actual arguments.

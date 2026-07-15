@@ -1640,6 +1640,60 @@ def test_no_false_positive_hash_join_build_smaller():
     )
 
 
+def test_function_scan_bad_estimate():
+    """
+    Function Scan where the planner guessed 1000 rows (PostgreSQL's flat
+    default for set-returning functions) but 100,000 came back — 100x error.
+    function_scan_bad_estimate must fire; fix is a ROWS N hint, not ANALYZE.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Function Scan",
+            "Function Name": "get_active_accounts",
+            "Alias": "f",
+            "Plan Rows": 1000,
+            "Actual Rows": 100000,
+            "Total Cost": 12.5,
+            "Actual Total Time": 850.0,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 850.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "function_scan_bad_estimate" in names, (
+        f"expected function_scan_bad_estimate (ratio=100x), got {names}"
+    )
+
+
+def test_no_false_positive_function_scan_accurate_estimate():
+    """
+    Function Scan where the planner's row estimate is close to reality
+    (plan=900, actual=950, ratio~1.06x — well below 10x threshold).
+    function_scan_bad_estimate must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Function Scan",
+            "Function Name": "get_recent_transactions",
+            "Alias": "f",
+            "Plan Rows": 900,
+            "Actual Rows": 950,
+            "Total Cost": 10.0,
+            "Actual Total Time": 12.0,
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 12.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "function_scan_bad_estimate" not in names, (
+        f"ratio~1.06x should not fire function_scan_bad_estimate, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

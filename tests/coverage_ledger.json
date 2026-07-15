@@ -20,6 +20,10 @@
     "node_type": "Sort"
   },
   {
+    "skill_name": "function_scan_bad_estimate",
+    "node_type": "Function Scan"
+  },
+  {
     "skill_name": "hash_join_build_probe_imbalance",
     "node_type": "Hash Join"
   },

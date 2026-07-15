@@ -1095,3 +1095,36 @@ def test_negative_sort_spill_to_disk_in_memory():
         ],
         SKILLS,
     )
+
+
+# ---------------------------------------------------------------------------
+# function_scan_bad_estimate
+# ---------------------------------------------------------------------------
+
+
+def test_negative_function_scan_bad_estimate_accurate_estimate():
+    """
+    Function Scan where plan_rows ≈ actual_rows (ratio ~1.06x — well below
+    the 10x threshold). function_scan_bad_estimate must not fire.
+    Registers (function_scan_bad_estimate, Function Scan) in the ledger.
+    """
+    assert_no_match(
+        "function_scan_bad_estimate",
+        "Function Scan",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Function Scan",
+                    "Function Name": "get_recent_transactions",
+                    "Alias": "f",
+                    "Plan Rows": 900,
+                    "Actual Rows": 950,
+                    "Total Cost": 10.0,
+                    "Actual Total Time": 12.0,
+                },
+                "Planning Time": 0.2,
+                "Execution Time": 12.2,
+            }
+        ],
+        SKILLS,
+    )
