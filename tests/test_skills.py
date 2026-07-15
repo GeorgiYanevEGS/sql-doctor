@@ -563,6 +563,117 @@ def test_no_false_positive_sort_in_memory():
     assert "sort_spill_to_disk" not in names, f"in-memory sort wrongly flagged, got {names}"
 
 
+def test_ratio_guard_allows_zero_actual_rows():
+    """
+    Guard fix: plan_rows > 0, actual_rows == 0 should NOT be blocked by the
+    ratio guard. The guard exists to protect against plan_rows == 0 (undefined
+    ratio), not against actual_rows == 0 (a genuinely empty result).
+    Also confirms that plan_rows == 0 still returns False (guard stays intact).
+    """
+    from core.skill_matcher import Skill
+
+    skill = Skill(
+        name="_test_guard",
+        description="",
+        detects={"max_row_estimate_error_ratio": 0.1},
+        severity="medium",
+        explanation="",
+        fix_template="",
+        covers_node_types=[],
+    )
+    from core.explain_parser import PlanNode
+
+    node_empty_result = PlanNode(
+        node_type="Seq Scan", relation_name="t", index_name=None,
+        filter_condition=None, index_condition=None,
+        plan_rows=1000.0, actual_rows=0.0,
+        total_cost=100.0, actual_total_time=5.0,
+    )
+    assert skill.matches_node(node_empty_result), (
+        "guard wrongly blocked plan_rows=1000, actual_rows=0 (ratio=0.0 is meaningful here)"
+    )
+
+    node_zero_plan = PlanNode(
+        node_type="Seq Scan", relation_name="t", index_name=None,
+        filter_condition=None, index_condition=None,
+        plan_rows=0.0, actual_rows=0.0,
+        total_cost=100.0, actual_total_time=5.0,
+    )
+    assert not skill.matches_node(node_zero_plan), (
+        "guard must still block plan_rows=0 (ratio is undefined)"
+    )
+
+
+def test_empty_result_bad_estimate():
+    """
+    Seq Scan estimated 1000 rows but returned 0 — planner badly overestimated.
+    empty_result_bad_estimate must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Filter": "(account_id = 9999 AND status = 'DELETED')",
+            "Plan Rows": 1000,
+            "Actual Rows": 0,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 25.0,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 25.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "empty_result_bad_estimate" in names, (
+        f"expected empty_result_bad_estimate, got {names}"
+    )
+
+
+def test_no_false_positive_empty_result_plan_too_small():
+    """Plan rows below the min_plan_rows threshold — not worth flagging."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 5,
+            "Actual Rows": 0,
+            "Total Cost": 10.0,
+            "Actual Total Time": 0.5,
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 0.6,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "empty_result_bad_estimate" not in names, (
+        f"plan_rows=5 is below min threshold, should not fire, got {names}"
+    )
+
+
+def test_no_false_positive_empty_result_ratio_too_high():
+    """Plan rows and actual rows are close — not a bad estimate."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 1000,
+            "Actual Rows": 800,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 25.0,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 25.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "empty_result_bad_estimate" not in names, (
+        f"ratio=0.8 is above threshold, should not fire, got {names}"
+    )
+
+
 def test_sort_key_parsed_from_explain_json():
     """Sort Key array from EXPLAIN JSON must be captured on PlanNode.sort_key."""
     explain_json = [{

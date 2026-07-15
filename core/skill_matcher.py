@@ -113,15 +113,23 @@ class Skill:
             return False
 
         if "min_row_estimate_error_ratio" in rules or "max_row_estimate_error_ratio" in rules:
-            ratio = node.row_estimate_error_ratio
-            if ratio == 0.0:
+            # Guard on plan_rows specifically, not on the ratio itself. The old
+            # `if ratio == 0.0: return False` guard conflated two distinct cases:
+            # plan_rows == 0 (ratio undefined, can't evaluate — should skip) and
+            # actual_rows == 0 (ratio is genuinely 0.0, meaningful for low-estimate
+            # detection like empty_result_bad_estimate). Guard only the former.
+            if node.plan_rows <= 0:
                 return False
+            ratio = node.row_estimate_error_ratio
             lo = rules.get("min_row_estimate_error_ratio")
             hi = rules.get("max_row_estimate_error_ratio")
             if lo is not None and ratio < lo:
                 return False
             if hi is not None and ratio > hi:
                 return False
+
+        if "min_plan_rows" in rules and node.plan_rows < rules["min_plan_rows"]:
+            return False
 
         if "condition_pattern" in rules:
             haystack = " ".join(

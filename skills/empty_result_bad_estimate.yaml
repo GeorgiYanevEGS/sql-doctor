@@ -1,0 +1,23 @@
+name: empty_result_bad_estimate
+covers_node_types: ["*"]
+# Mirror image of stale_statistics (which detects 10x overcount in the high direction).
+# This detects the low direction: the planner expected many rows but the node
+# produced very few or none. Both share the same root cause — stale statistics
+# or skewed data distribution that the planner's model doesn't reflect.
+detects:
+  max_row_estimate_error_ratio: 0.1
+  min_plan_rows: 100
+severity: high
+explanation: >
+  The planner estimated significantly more rows than were actually produced
+  (actual rows < 10% of estimated). A highly selective predicate, stale
+  statistics, or a skewed data distribution may have caused the planner to
+  choose a suboptimal strategy (e.g. Seq Scan when an index would be faster
+  because the predicate almost never matches).
+fix_template: >
+  1) Run ANALYZE on {table} to refresh row-count statistics.
+  2) If data is highly skewed (e.g. most rows share one value), consider
+     CREATE STATISTICS for correlated columns so the planner models
+     multi-column selectivity correctly.
+  3) Check whether a partial index covering the specific predicate condition
+     would let the planner estimate — and satisfy — the query more cheaply.

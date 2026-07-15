@@ -1,5 +1,25 @@
 [
   {
+    "skill_name": "empty_result_bad_estimate",
+    "node_type": "Hash"
+  },
+  {
+    "skill_name": "empty_result_bad_estimate",
+    "node_type": "Index Scan"
+  },
+  {
+    "skill_name": "empty_result_bad_estimate",
+    "node_type": "Nested Loop"
+  },
+  {
+    "skill_name": "empty_result_bad_estimate",
+    "node_type": "Seq Scan"
+  },
+  {
+    "skill_name": "empty_result_bad_estimate",
+    "node_type": "Sort"
+  },
+  {
     "skill_name": "hash_join_disk_spill",
     "node_type": "Hash"
   },

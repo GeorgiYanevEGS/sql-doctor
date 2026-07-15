@@ -32,6 +32,171 @@ pytestmark = pytest.mark.serial
 
 
 # ---------------------------------------------------------------------------
+# empty_result_bad_estimate
+# ---------------------------------------------------------------------------
+# Each fixture has plan_rows=1000, actual_rows=900 (ratio=0.9 > 0.1 threshold)
+# — the estimate was accurate, so the skill must not fire.
+
+
+def test_negative_empty_result_bad_estimate_accurate_seq_scan():
+    """Seq Scan where actual rows ≈ plan rows — not a bad estimate. Registers ledger entry."""
+    assert_no_match(
+        "empty_result_bad_estimate",
+        "Seq Scan",
+        [{
+            "Plan": {
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 1000,
+                "Actual Rows": 900,
+                "Total Cost": 4000.0,
+                "Actual Total Time": 25.0,
+            },
+            "Planning Time": 0.3,
+            "Execution Time": 25.3,
+        }],
+        SKILLS,
+    )
+
+
+def test_negative_empty_result_bad_estimate_accurate_index_scan():
+    """Index Scan where actual rows ≈ plan rows. Registers ledger entry."""
+    assert_no_match(
+        "empty_result_bad_estimate",
+        "Index Scan",
+        [{
+            "Plan": {
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_account_id",
+                "Index Cond": "(account_id = 42)",
+                "Plan Rows": 200,
+                "Actual Rows": 195,
+                "Total Cost": 50.0,
+                "Actual Total Time": 2.0,
+            },
+            "Planning Time": 0.1,
+            "Execution Time": 2.1,
+        }],
+        SKILLS,
+    )
+
+
+def test_negative_empty_result_bad_estimate_accurate_nested_loop():
+    """Nested Loop where actual rows ≈ plan rows. Registers ledger entry."""
+    assert_no_match(
+        "empty_result_bad_estimate",
+        "Nested Loop",
+        [{
+            "Plan": {
+                "Node Type": "Nested Loop",
+                "Plan Rows": 500,
+                "Actual Rows": 480,
+                "Total Cost": 800.0,
+                "Actual Total Time": 30.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 500,
+                        "Actual Rows": 480,
+                        "Total Cost": 400.0,
+                        "Actual Total Time": 15.0,
+                    },
+                    {
+                        "Node Type": "Index Scan",
+                        "Relation Name": "accounts",
+                        "Index Name": "accounts_pkey",
+                        "Plan Rows": 1,
+                        "Actual Rows": 1,
+                        "Total Cost": 8.0,
+                        "Actual Total Time": 0.03,
+                    },
+                ],
+            },
+            "Planning Time": 0.2,
+            "Execution Time": 30.2,
+        }],
+        SKILLS,
+    )
+
+
+def test_negative_empty_result_bad_estimate_accurate_hash():
+    """Hash node where actual rows ≈ plan rows. Registers ledger entry."""
+    assert_no_match(
+        "empty_result_bad_estimate",
+        "Hash",
+        [{
+            "Plan": {
+                "Node Type": "Hash Join",
+                "Hash Cond": "(t.merchant_id = m.id)",
+                "Plan Rows": 1000,
+                "Actual Rows": 950,
+                "Total Cost": 500.0,
+                "Actual Total Time": 40.0,
+                "Plans": [
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 950,
+                        "Total Cost": 300.0,
+                        "Actual Total Time": 25.0,
+                    },
+                    {
+                        "Node Type": "Hash",
+                        "Plan Rows": 500,
+                        "Actual Rows": 490,
+                        "Total Cost": 100.0,
+                        "Actual Total Time": 8.0,
+                        "Hash Batches": 1,
+                        "Original Hash Batches": 1,
+                        "Hash Buckets": 1024,
+                        "Original Hash Buckets": 1024,
+                        "Peak Memory Usage": 4096,
+                    },
+                ],
+            },
+            "Planning Time": 0.3,
+            "Execution Time": 40.3,
+        }],
+        SKILLS,
+    )
+
+
+def test_negative_empty_result_bad_estimate_accurate_sort():
+    """Sort node where actual rows ≈ plan rows. Registers ledger entry."""
+    assert_no_match(
+        "empty_result_bad_estimate",
+        "Sort",
+        [{
+            "Plan": {
+                "Node Type": "Sort",
+                "Sort Key": ["created_at DESC"],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 512,
+                "Sort Space Type": "Memory",
+                "Plan Rows": 1000,
+                "Actual Rows": 920,
+                "Total Cost": 800.0,
+                "Actual Total Time": 15.0,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 1000,
+                    "Actual Rows": 920,
+                    "Total Cost": 600.0,
+                    "Actual Total Time": 12.0,
+                }],
+            },
+            "Planning Time": 0.2,
+            "Execution Time": 15.2,
+        }],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # missing_index
 # ---------------------------------------------------------------------------
 
