@@ -212,6 +212,19 @@ What's next (not yet done):
   PostgreSQL versions or against a real spilling sort — only against the
   single synthetic fixture written during development.
 
+- **`sort_expression_no_index` and `join_condition_function_wrap` share a
+  function-name allowlist that doesn't cover all non-indexable expressions**.
+  Both skills use the same regex — `\b(lower|upper|to_char|to_number|cast)\s*\(` —
+  which misses two broad categories: (1) functions outside the explicit list,
+  such as `date_trunc('month', created_at)` (a common banking-reporting sort
+  expression); and (2) PostgreSQL's `::type` cast shorthand syntax (e.g.
+  `created_at::date`), which produces different text than the `cast(...)` function
+  form the regex matches. This is a structural scope limitation, not a bug — the
+  skills never claimed to cover these forms, so no ledger entry is needed. Widening
+  the regex or switching to a general "any expression that isn't a plain column
+  reference" heuristic is the fix, but both carry higher false-positive risk and
+  are deferred.
+
 - **Validator can't yet distinguish "hallucinated existing object" from
   "proposed new object name"**. If the LLM suggests `CREATE INDEX
   idx_new_thing ON ...`, the validator correctly flags `idx_new_thing`
