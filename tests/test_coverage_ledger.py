@@ -287,6 +287,64 @@ def test_negative_nested_loop_bad_plan_good_estimate():
 
 
 # ---------------------------------------------------------------------------
+# hash_join_build_probe_imbalance
+# ---------------------------------------------------------------------------
+
+
+def test_negative_hash_join_build_probe_imbalance_balanced():
+    """
+    Hash Join with balanced sides (build=1000, probe=5000, ratio=0.2x —
+    planner correctly hashed the smaller relation).
+    hash_join_build_probe_imbalance must not fire.
+    Registers (hash_join_build_probe_imbalance, Hash Join) in the ledger.
+    """
+    assert_no_match(
+        "hash_join_build_probe_imbalance",
+        "Hash Join",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Hash Join",
+                    "Hash Cond": "(transactions.account_id = accounts.id)",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 8000.0,
+                    "Actual Total Time": 150.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 5000,
+                            "Actual Rows": 5000,
+                            "Total Cost": 500.0,
+                            "Actual Total Time": 50.0,
+                        },
+                        {
+                            "Node Type": "Hash",
+                            "Plan Rows": 1000,
+                            "Actual Rows": 1000,
+                            "Total Cost": 100.0,
+                            "Actual Total Time": 10.0,
+                            "Plans": [{
+                                "Node Type": "Seq Scan",
+                                "Relation Name": "accounts",
+                                "Plan Rows": 1000,
+                                "Actual Rows": 1000,
+                                "Total Cost": 80.0,
+                                "Actual Total Time": 8.0,
+                            }],
+                        },
+                    ],
+                },
+                "Planning Time": 0.3,
+                "Execution Time": 150.3,
+            }
+        ],
+        SKILLS,
+    )
+
+
+# ---------------------------------------------------------------------------
 # join_condition_function_wrap
 # ---------------------------------------------------------------------------
 

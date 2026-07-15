@@ -20,6 +20,10 @@
     "node_type": "Sort"
   },
   {
+    "skill_name": "hash_join_build_probe_imbalance",
+    "node_type": "Hash Join"
+  },
+  {
     "skill_name": "hash_join_disk_spill",
     "node_type": "Hash"
   },

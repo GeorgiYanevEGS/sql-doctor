@@ -1488,6 +1488,158 @@ def test_join_conditions_parsed_from_explain_json():
     assert node.merge_cond is None, f"expected merge_cond=None on Hash Join, got {node.merge_cond!r}"
 
 
+def test_hash_join_build_probe_imbalance():
+    """
+    Hash Join where the build side (Hash node, children[1]) has 50,000 rows
+    but the probe side (children[0]) has only 5,000 rows — 10x ratio, well
+    above the 5x threshold. hash_join_build_probe_imbalance must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Hash Join",
+            "Hash Cond": "(transactions.account_id = large_ref.id)",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 20000.0,
+            "Actual Total Time": 500.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                },
+                {
+                    "Node Type": "Hash",
+                    "Plan Rows": 50000,
+                    "Actual Rows": 50000,
+                    "Total Cost": 5000.0,
+                    "Actual Total Time": 100.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "large_ref",
+                        "Plan Rows": 50000,
+                        "Actual Rows": 50000,
+                        "Total Cost": 4000.0,
+                        "Actual Total Time": 80.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 500.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_join_build_probe_imbalance" in names, (
+        f"expected hash_join_build_probe_imbalance (build=50k, probe=5k, ratio=10x), got {names}"
+    )
+
+
+def test_no_false_positive_hash_join_balanced():
+    """
+    Hash Join where both sides have similar row counts (~1x ratio).
+    hash_join_build_probe_imbalance must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Hash Join",
+            "Hash Cond": "(transactions.account_id = accounts.id)",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 10000.0,
+            "Actual Total Time": 200.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                },
+                {
+                    "Node Type": "Hash",
+                    "Plan Rows": 4800,
+                    "Actual Rows": 4800,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 40.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "accounts",
+                        "Plan Rows": 4800,
+                        "Actual Rows": 4800,
+                        "Total Cost": 400.0,
+                        "Actual Total Time": 35.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 200.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_join_build_probe_imbalance" not in names, (
+        f"balanced sides (ratio ~1x) should not fire, got {names}"
+    )
+
+
+def test_no_false_positive_hash_join_build_smaller():
+    """
+    Hash Join where the build side is correctly the smaller relation
+    (build=1000, probe=5000, ratio=0.2x — planner made the right choice).
+    hash_join_build_probe_imbalance must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Hash Join",
+            "Hash Cond": "(transactions.account_id = accounts.id)",
+            "Plan Rows": 5000,
+            "Actual Rows": 5000,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 150.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 50.0,
+                },
+                {
+                    "Node Type": "Hash",
+                    "Plan Rows": 1000,
+                    "Actual Rows": 1000,
+                    "Total Cost": 100.0,
+                    "Actual Total Time": 10.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "accounts",
+                        "Plan Rows": 1000,
+                        "Actual Rows": 1000,
+                        "Total Cost": 80.0,
+                        "Actual Total Time": 8.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 150.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_join_build_probe_imbalance" not in names, (
+        f"build smaller than probe (correct plan) should not fire, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

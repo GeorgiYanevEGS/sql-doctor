@@ -1,0 +1,31 @@
+name: hash_join_build_probe_imbalance
+covers_node_types: ["Hash Join"]
+detects:
+  node_type: "Hash Join"
+  build_probe_ratio_min: 5.0
+severity: medium
+explanation: >
+  The Hash Join hashed a relation that is at least 5x larger than the probe
+  side. PostgreSQL builds an in-memory hash table from the inner (build) side
+  and probes it row-by-row with the outer (probe) side — so the hash table
+  size is determined by the build side's row count. When the planner picks the
+  wrong side to hash, the hash table is much larger than it needs to be,
+  consuming more work_mem and increasing the risk of spilling to disk. The
+  optimal choice is always to hash the smaller relation.
+fix_template: >
+  1) Run ANALYZE on both joined tables to give the planner accurate row-count
+     statistics. Stale statistics are the most common reason the planner picks
+     the wrong side — it estimated the larger table as smaller.
+  2) If statistics are current and the planner still picks the wrong side,
+     check pg_stats for the join columns: extreme correlation or skew can
+     cause the planner to underestimate one side's cardinality after filtering.
+     Increasing statistics target (ALTER TABLE {table} ALTER COLUMN <col>
+     SET STATISTICS 500; ANALYZE {table}) can help the planner estimate more
+     accurately.
+  3) As a session-level test, force the alternative join order with:
+     SET join_collapse_limit = 1;
+     and reorder the tables in the FROM clause so the smaller table is listed
+     second (the planner hashes the inner/right table of a Hash Join).
+  4) If the build side is large because of a many-to-many join expanding rows,
+     consider restructuring the query: pre-aggregate or filter one side before
+     joining to reduce the build-side cardinality before the hash table is built.

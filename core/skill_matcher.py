@@ -220,6 +220,21 @@ class Skill:
             if not any(c.node_type in allowed for c in node.children):
                 return False
 
+        # Build/probe row count ratio: children[1] is the Hash node (build side),
+        # children[0] is the probe side. A high ratio means the planner hashed the
+        # larger relation, forcing a bigger in-memory (or spilled) hash table than
+        # necessary. Guard on probe_rows <= 0 (empty probe side = no join output,
+        # no meaningful imbalance to report).
+        if "build_probe_ratio_min" in rules:
+            if len(node.children) < 2:
+                return False
+            probe_rows = node.children[0].actual_rows
+            build_rows = node.children[1].actual_rows
+            if probe_rows <= 0:
+                return False
+            if (build_rows / probe_rows) < rules["build_probe_ratio_min"]:
+                return False
+
         # Parallel worker shortfall: workers_launched < workers_planned means the
         # server couldn't provide all requested workers at execution time —
         # typically max_worker_processes or max_parallel_workers exhaustion.
