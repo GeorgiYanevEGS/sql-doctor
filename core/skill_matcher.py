@@ -114,7 +114,7 @@ class Skill:
             return True
         return node_type in self._verified_node_types
 
-    def matches_node(self, node: PlanNode, table_row_counts: dict[str, int] | None = None) -> bool:
+    def matches_node(self, node: PlanNode, table_row_counts: dict[str, int] | None = None, *, execution_time_ms: float = 0.0) -> bool:
         rules = self.detects
         table_row_counts = table_row_counts or {}
 
@@ -295,6 +295,21 @@ class Skill:
             if node.parent_relationship != "SubPlan":
                 return False
 
+        # Non-correlated (init) subplan: executed exactly once before the main plan.
+        # "InitPlan" distinguishes from "SubPlan" (correlated, re-executed per outer row).
+        if rules.get("requires_initplan_parent"):
+            if node.parent_relationship != "InitPlan":
+                return False
+
+        # InitPlan time ratio: the node's own actual_total_time as a fraction of the
+        # overall plan execution time. Guards on execution_time_ms <= 0 (ratio undefined
+        # — conservative: don't fire if plan time is missing or zero).
+        if "initplan_time_ratio_min" in rules:
+            if execution_time_ms <= 0:
+                return False
+            if node.actual_total_time / execution_time_ms < rules["initplan_time_ratio_min"]:
+                return False
+
         return True
 
     def matches_plan(self, plan: ParsedPlan) -> bool:
@@ -408,7 +423,7 @@ def match_skills(
         for skill in skills:
             if skill.scope == "plan":
                 continue
-            if skill.matches_node(node, table_row_counts):
+            if skill.matches_node(node, table_row_counts, execution_time_ms=plan.execution_time_ms):
                 matches.append(
                     SkillMatch(
                         skill_name=skill.name,

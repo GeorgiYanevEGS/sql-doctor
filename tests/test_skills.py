@@ -2208,6 +2208,128 @@ def test_no_false_positive_hash_agg_no_spill():
     )
 
 
+def test_initplan_expensive():
+    """InitPlan Aggregate consuming 40% of execution time — must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "orders",
+            "Plan Rows": 100000,
+            "Actual Rows": 100000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [{
+                "Node Type": "Aggregate",
+                "Parent Relationship": "InitPlan",
+                "Strategy": "Plain",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 3000.0,
+                "Actual Total Time": 400.0,
+                "Actual Loops": 1,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 2000000,
+                    "Actual Rows": 2000000,
+                    "Total Cost": 2900.0,
+                    "Actual Total Time": 380.0,
+                }],
+            }],
+        },
+        "Planning Time": 1.5,
+        "Execution Time": 1000.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "initplan_expensive" in names, (
+        f"expected initplan_expensive (InitPlan ratio=0.40), got {names}"
+    )
+
+
+def test_no_false_positive_initplan_cheap():
+    """InitPlan consuming only 5% of execution time — below 0.3 threshold, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "orders",
+            "Plan Rows": 100000,
+            "Actual Rows": 100000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 950.0,
+            "Plans": [{
+                "Node Type": "Aggregate",
+                "Parent Relationship": "InitPlan",
+                "Strategy": "Plain",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 200.0,
+                "Actual Total Time": 50.0,
+                "Actual Loops": 1,
+                "Plans": [{
+                    "Node Type": "Index Only Scan",
+                    "Relation Name": "transactions",
+                    "Index Name": "idx_transactions_amount",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 100.0,
+                    "Actual Total Time": 40.0,
+                    "Heap Fetches": 0,
+                }],
+            }],
+        },
+        "Planning Time": 0.8,
+        "Execution Time": 1000.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "initplan_expensive" not in names, (
+        f"cheap InitPlan (ratio=0.05) should not fire initplan_expensive, got {names}"
+    )
+
+
+def test_no_false_positive_subplan_not_initplan():
+    """SubPlan (correlated) with high actual_total_time — wrong parent relationship, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "orders",
+            "Plan Rows": 100000,
+            "Actual Rows": 100000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [{
+                "Node Type": "Aggregate",
+                "Parent Relationship": "SubPlan",
+                "Strategy": "Plain",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 3000.0,
+                "Actual Total Time": 400.0,
+                "Actual Loops": 100000,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 2900.0,
+                    "Actual Total Time": 3.8,
+                }],
+            }],
+        },
+        "Planning Time": 1.5,
+        "Execution Time": 1000.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "initplan_expensive" not in names, (
+        f"SubPlan parent relationship should not fire initplan_expensive, got {names}"
+    )
+
+
 def test_sort_expression_no_index():
     """Sort node with LOWER() in sort key — function wrap prevents index use. Must fire."""
     explain_json = [{

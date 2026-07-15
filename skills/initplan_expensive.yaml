@@ -1,0 +1,42 @@
+name: initplan_expensive
+# covers_node_types is intentionally empty: InitPlan nodes can be any node type
+# (Aggregate, Seq Scan, Index Scan, etc.) depending on the subquery's shape.
+# Coverage is not tracked per node type for this skill — the false-positive
+# guards live in tests/test_skills.py instead.
+covers_node_types: []
+detects:
+  requires_initplan_parent: true
+  initplan_time_ratio_min: 0.3
+severity: medium
+explanation: >
+  An InitPlan (a non-correlated subquery evaluated once to produce a scalar
+  value — typically a MAX/MIN/COUNT used as a filter or assignment) consumed
+  at least 30% of the total query execution time. Unlike a correlated SubPlan
+  (which re-executes once per outer row), an InitPlan executes exactly once
+  and its result is cached. But a single slow InitPlan is still a bottleneck:
+  it serialises with the rest of the plan, so nothing runs until it completes.
+  Common causes: a full Seq Scan inside the subquery computing an aggregate
+  that a supporting index could answer in microseconds, or a missing filter
+  index on the subquery's WHERE clause.
+fix_template: >
+  Inspect the InitPlan subtree in the EXPLAIN output to find the expensive node:
+
+  1) If the InitPlan computes an aggregate (MAX, MIN, COUNT) over a large table
+     with no supporting index, add an index on the aggregate column so PostgreSQL
+     can use an Index Only Scan instead of a full table scan:
+       CREATE INDEX CONCURRENTLY idx_<table>_<col> ON <table> (<col>);
+
+  2) If the InitPlan contains a Seq Scan with a filter predicate, add an index
+     on the filter column:
+       CREATE INDEX CONCURRENTLY idx_<table>_<filter_col> ON <table> (<filter_col>);
+
+  3) If the subquery result is logically the same across the query, materialise
+     it into a CTE so the planner's cache semantics are explicit:
+       WITH threshold AS MATERIALIZED (
+         SELECT MAX(amount) FROM transactions WHERE status = 'settled'
+       )
+       SELECT * FROM orders WHERE amount > (SELECT * FROM threshold);
+
+  Verify with EXPLAIN (ANALYZE) that the InitPlan node's Actual Total Time
+  drops after adding the index. A well-indexed MAX/MIN over a B-tree can drop
+  from hundreds of milliseconds to under 1ms.
