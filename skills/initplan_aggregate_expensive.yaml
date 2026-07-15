@@ -1,0 +1,44 @@
+name: initplan_aggregate_expensive
+scope: plan
+covers_node_types: ["PLAN_LEVEL"]
+detects:
+  aggregate_initplan_time_ratio_min: 0.3
+  aggregate_initplan_min_count: 2
+severity: medium
+explanation: >
+  Multiple InitPlan subqueries (non-correlated scalar subqueries evaluated once
+  before the main plan) collectively consumed at least 30% of total query
+  execution time, even though no single InitPlan individually crossed the
+  threshold. Each InitPlan executes exactly once and its result is cached, so
+  together they serialise with each other and with the main plan before any
+  output is produced. When several InitPlans each contribute a moderate fraction
+  of execution time, the aggregate cost can dominate even if no individual
+  subquery appears expensive in isolation.
+fix_template: >
+  Inspect each InitPlan subtree in EXPLAIN output and address the most expensive
+  one first:
+
+  1) For InitPlans computing an aggregate (MAX, MIN, COUNT) over a large table
+     without a supporting index, add an index on the aggregate column so
+     PostgreSQL can use an Index Only Scan instead of a full table scan:
+       CREATE INDEX CONCURRENTLY idx_<table>_<col> ON <table> (<col>);
+     A well-indexed MAX/MIN can drop from hundreds of milliseconds to under 1ms.
+
+  2) For InitPlans with a Seq Scan and a filter predicate, add an index on the
+     filter column.
+
+  3) Consider whether multiple scalar subqueries can be collapsed into a single
+     subquery returning multiple values (e.g. a single CTE with SELECT MAX(a),
+     MIN(b) rather than two separate CTEs), eliminating duplicate scans over
+     the same table.
+
+  4) If the subquery results are logically stable across the query, materialise
+     each one explicitly:
+       WITH threshold_a AS MATERIALIZED (SELECT MAX(amount) FROM transactions)
+       WITH threshold_b AS MATERIALIZED (SELECT MIN(balance) FROM accounts)
+       SELECT ... WHERE amount > (SELECT * FROM threshold_a)
+                    AND balance < (SELECT * FROM threshold_b);
+
+  After addressing each InitPlan, re-run EXPLAIN (ANALYZE) and confirm each
+  node's Actual Total Time drops. Target: aggregate InitPlan time below 10% of
+  total Execution Time.

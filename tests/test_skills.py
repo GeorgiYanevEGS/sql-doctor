@@ -2611,6 +2611,225 @@ def test_no_false_positive_subplan_not_initplan():
     )
 
 
+def test_initplan_aggregate_expensive():
+    """
+    Three InitPlan Aggregates each consuming 150ms of a 600ms total (each ratio=0.25,
+    below the 0.3 per-node threshold). initplan_expensive must NOT fire on any of them.
+    Aggregate sum=450ms=75% of total — initplan_aggregate_expensive MUST fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "orders",
+            "Plan Rows": 200000,
+            "Actual Rows": 200000,
+            "Total Cost": 9000.0,
+            "Actual Total Time": 150.0,
+            "Plans": [
+                {
+                    "Node Type": "Aggregate",
+                    "Parent Relationship": "InitPlan",
+                    "Strategy": "Plain",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 2800.0,
+                    "Actual Total Time": 150.0,
+                    "Actual Loops": 1,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 1000000,
+                        "Actual Rows": 1000000,
+                        "Total Cost": 2700.0,
+                        "Actual Total Time": 140.0,
+                    }],
+                },
+                {
+                    "Node Type": "Aggregate",
+                    "Parent Relationship": "InitPlan",
+                    "Strategy": "Plain",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 2800.0,
+                    "Actual Total Time": 150.0,
+                    "Actual Loops": 1,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "accounts",
+                        "Plan Rows": 1000000,
+                        "Actual Rows": 1000000,
+                        "Total Cost": 2700.0,
+                        "Actual Total Time": 140.0,
+                    }],
+                },
+                {
+                    "Node Type": "Aggregate",
+                    "Parent Relationship": "InitPlan",
+                    "Strategy": "Plain",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 2800.0,
+                    "Actual Total Time": 150.0,
+                    "Actual Loops": 1,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "merchants",
+                        "Plan Rows": 1000000,
+                        "Actual Rows": 1000000,
+                        "Total Cost": 2700.0,
+                        "Actual Total Time": 140.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 600.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "initplan_aggregate_expensive" in names, (
+        f"expected initplan_aggregate_expensive (3×150ms=75% of 600ms), got {names}"
+    )
+    assert "initplan_expensive" not in names, (
+        f"initplan_expensive should not fire when each individual ratio=0.25, got {names}"
+    )
+
+
+def test_no_false_positive_initplan_aggregate_cheap():
+    """
+    Three InitPlan Aggregates each consuming 50ms of a 600ms total.
+    Aggregate sum=150ms=25% of total — below 0.3 threshold, must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "orders",
+            "Plan Rows": 200000,
+            "Actual Rows": 200000,
+            "Total Cost": 9000.0,
+            "Actual Total Time": 450.0,
+            "Plans": [
+                {
+                    "Node Type": "Aggregate",
+                    "Parent Relationship": "InitPlan",
+                    "Strategy": "Plain",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 300.0,
+                    "Actual Total Time": 50.0,
+                    "Actual Loops": 1,
+                    "Plans": [{
+                        "Node Type": "Index Only Scan",
+                        "Relation Name": "transactions",
+                        "Index Name": "idx_transactions_amount",
+                        "Plan Rows": 1,
+                        "Actual Rows": 1,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 40.0,
+                        "Heap Fetches": 0,
+                    }],
+                },
+                {
+                    "Node Type": "Aggregate",
+                    "Parent Relationship": "InitPlan",
+                    "Strategy": "Plain",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 300.0,
+                    "Actual Total Time": 50.0,
+                    "Actual Loops": 1,
+                    "Plans": [{
+                        "Node Type": "Index Only Scan",
+                        "Relation Name": "accounts",
+                        "Index Name": "idx_accounts_balance",
+                        "Plan Rows": 1,
+                        "Actual Rows": 1,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 40.0,
+                        "Heap Fetches": 0,
+                    }],
+                },
+                {
+                    "Node Type": "Aggregate",
+                    "Parent Relationship": "InitPlan",
+                    "Strategy": "Plain",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 300.0,
+                    "Actual Total Time": 50.0,
+                    "Actual Loops": 1,
+                    "Plans": [{
+                        "Node Type": "Index Only Scan",
+                        "Relation Name": "merchants",
+                        "Index Name": "idx_merchants_id",
+                        "Plan Rows": 1,
+                        "Actual Rows": 1,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 40.0,
+                        "Heap Fetches": 0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 600.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "initplan_aggregate_expensive" not in names, (
+        f"aggregate sum=25% should not fire initplan_aggregate_expensive, got {names}"
+    )
+
+
+def test_no_false_positive_initplan_aggregate_single_node():
+    """
+    Single InitPlan at 200ms of a 400ms total (ratio=0.5, above per-node threshold).
+    initplan_expensive must fire. initplan_aggregate_expensive must NOT fire —
+    min_count=2 not satisfied.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "orders",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 200.0,
+            "Plans": [{
+                "Node Type": "Aggregate",
+                "Parent Relationship": "InitPlan",
+                "Strategy": "Plain",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 3000.0,
+                "Actual Total Time": 200.0,
+                "Actual Loops": 1,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 2000000,
+                    "Actual Rows": 2000000,
+                    "Total Cost": 2900.0,
+                    "Actual Total Time": 180.0,
+                }],
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 400.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "initplan_expensive" in names, (
+        f"single InitPlan at 50% of total must fire initplan_expensive, got {names}"
+    )
+    assert "initplan_aggregate_expensive" not in names, (
+        f"single InitPlan (count=1 < min_count=2) must not fire aggregate skill, got {names}"
+    )
+
+
 def test_sort_expression_no_index():
     """Sort node with LOWER() in sort key — function wrap prevents index use. Must fire."""
     explain_json = [{

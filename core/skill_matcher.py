@@ -130,6 +130,21 @@ class Skill:
                 return False
             if (plan.planning_time_ms / plan.execution_time_ms) < rules["min_planning_execution_ratio"]:
                 return False
+
+        # Aggregate InitPlan cost: sum actual_total_time across all InitPlan nodes and
+        # compare the total to execution_time_ms. Requires at least aggregate_initplan_min_count
+        # nodes so this doesn't overlap with the per-node initplan_expensive skill (count=1).
+        if "aggregate_initplan_time_ratio_min" in rules:
+            if plan.execution_time_ms <= 0:
+                return False
+            initplan_nodes = [n for n in plan.all_nodes() if n.parent_relationship == "InitPlan"]
+            min_count = rules.get("aggregate_initplan_min_count", 2)
+            if len(initplan_nodes) < min_count:
+                return False
+            total_initplan_time = sum(n.actual_total_time for n in initplan_nodes)
+            if total_initplan_time / plan.execution_time_ms < rules["aggregate_initplan_time_ratio_min"]:
+                return False
+
         return True
 
     def fix_text(self, node: PlanNode | None) -> str:

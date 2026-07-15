@@ -1102,6 +1102,96 @@ def test_negative_sort_spill_to_disk_in_memory():
 # ---------------------------------------------------------------------------
 
 
+def test_negative_initplan_aggregate_expensive_below_threshold():
+    """
+    Three InitPlan Aggregates each consuming 50ms of a 600ms total.
+    Aggregate sum=150ms=25% of total — below 0.3 threshold.
+    initplan_aggregate_expensive must not fire.
+    Registers (initplan_aggregate_expensive, PLAN_LEVEL) in the ledger.
+    """
+    assert_no_match(
+        "initplan_aggregate_expensive",
+        "PLAN_LEVEL",
+        [
+            {
+                "Plan": {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "orders",
+                    "Plan Rows": 200000,
+                    "Actual Rows": 200000,
+                    "Total Cost": 9000.0,
+                    "Actual Total Time": 450.0,
+                    "Plans": [
+                        {
+                            "Node Type": "Aggregate",
+                            "Parent Relationship": "InitPlan",
+                            "Strategy": "Plain",
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 300.0,
+                            "Actual Total Time": 50.0,
+                            "Actual Loops": 1,
+                            "Plans": [{
+                                "Node Type": "Index Only Scan",
+                                "Relation Name": "transactions",
+                                "Index Name": "idx_transactions_amount",
+                                "Plan Rows": 1,
+                                "Actual Rows": 1,
+                                "Total Cost": 200.0,
+                                "Actual Total Time": 40.0,
+                                "Heap Fetches": 0,
+                            }],
+                        },
+                        {
+                            "Node Type": "Aggregate",
+                            "Parent Relationship": "InitPlan",
+                            "Strategy": "Plain",
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 300.0,
+                            "Actual Total Time": 50.0,
+                            "Actual Loops": 1,
+                            "Plans": [{
+                                "Node Type": "Index Only Scan",
+                                "Relation Name": "accounts",
+                                "Index Name": "idx_accounts_balance",
+                                "Plan Rows": 1,
+                                "Actual Rows": 1,
+                                "Total Cost": 200.0,
+                                "Actual Total Time": 40.0,
+                                "Heap Fetches": 0,
+                            }],
+                        },
+                        {
+                            "Node Type": "Aggregate",
+                            "Parent Relationship": "InitPlan",
+                            "Strategy": "Plain",
+                            "Plan Rows": 1,
+                            "Actual Rows": 1,
+                            "Total Cost": 300.0,
+                            "Actual Total Time": 50.0,
+                            "Actual Loops": 1,
+                            "Plans": [{
+                                "Node Type": "Index Only Scan",
+                                "Relation Name": "merchants",
+                                "Index Name": "idx_merchants_id",
+                                "Plan Rows": 1,
+                                "Actual Rows": 1,
+                                "Total Cost": 200.0,
+                                "Actual Total Time": 40.0,
+                                "Heap Fetches": 0,
+                            }],
+                        },
+                    ],
+                },
+                "Planning Time": 0.5,
+                "Execution Time": 600.0,
+            }
+        ],
+        SKILLS,
+    )
+
+
 def test_negative_planning_time_dominates_low_ratio():
     """
     Plan where execution_time (500ms) >> planning_time (1ms): ratio=0.002,
