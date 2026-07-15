@@ -25,3 +25,12 @@ fix_template: >
   4) As a targeted fix for {table}: ALTER TABLE {table} SET
      (parallel_workers = N) to reserve a specific worker count for this
      table's scans, overriding the planner's default calculation.
+  5) If none of the above apply and workers_launched is consistently 0,
+     check whether the query or a function it calls performs a
+     parallel-unsafe operation: sequence access (nextval/currval), writes
+     to temporary tables, or calls to functions not marked PARALLEL SAFE.
+     PostgreSQL refuses to launch any workers for a plan that touches a
+     parallel-unsafe operation — no worker-count tuning will fix this.
+     Identify the unsafe operation with EXPLAIN (VERBOSE) and either
+     remove it, replace it with a parallel-safe equivalent, or mark the
+     function PARALLEL SAFE after auditing it manually.
