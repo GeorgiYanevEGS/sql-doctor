@@ -1960,6 +1960,99 @@ def test_no_false_positive_function_scan_accurate_estimate():
     )
 
 
+def test_parse_hash_agg_fields():
+    """Aggregate node with Strategy=Hashed, HashAgg Batches, Disk Usage are parsed correctly."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Aggregate",
+            "Strategy": "Hashed",
+            "HashAgg Batches": 4,
+            "Disk Usage": 8192,
+            "Plan Rows": 50000,
+            "Actual Rows": 45000,
+            "Total Cost": 15000.0,
+            "Actual Total Time": 2400.0,
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 2400.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    node = plan.root
+    assert node.strategy == "Hashed", f"expected strategy='Hashed', got {node.strategy!r}"
+    assert node.hash_agg_batches == 4, f"expected hash_agg_batches=4, got {node.hash_agg_batches!r}"
+    assert node.disk_usage_kb == 8192, f"expected disk_usage_kb=8192, got {node.disk_usage_kb!r}"
+
+
+def test_hash_aggregate_disk_spill():
+    """
+    Aggregate (Strategy=Hashed) with Disk Usage=8192 KB — hash table exceeded
+    work_mem and spilled to disk. hash_aggregate_disk_spill must fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Aggregate",
+            "Strategy": "Hashed",
+            "HashAgg Batches": 4,
+            "Disk Usage": 8192,
+            "Plan Rows": 50000,
+            "Actual Rows": 45000,
+            "Total Cost": 15000.0,
+            "Actual Total Time": 2400.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 200000,
+                "Actual Rows": 200000,
+                "Total Cost": 4500.0,
+                "Actual Total Time": 300.0,
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 2400.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_aggregate_disk_spill" in names, (
+        f"expected hash_aggregate_disk_spill (Disk Usage=8192 KB), got {names}"
+    )
+
+
+def test_no_false_positive_hash_agg_no_spill():
+    """
+    Aggregate (Strategy=Hashed) with Disk Usage=0 — hash table fit entirely in
+    work_mem. hash_aggregate_disk_spill must not fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Aggregate",
+            "Strategy": "Hashed",
+            "HashAgg Batches": 1,
+            "Disk Usage": 0,
+            "Plan Rows": 5000,
+            "Actual Rows": 4800,
+            "Total Cost": 2000.0,
+            "Actual Total Time": 80.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Plan Rows": 5000,
+                "Actual Rows": 4800,
+                "Total Cost": 500.0,
+                "Actual Total Time": 20.0,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 80.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "hash_aggregate_disk_spill" not in names, (
+        f"in-memory HashAgg (Disk Usage=0) should not fire, got {names}"
+    )
+
+
 if __name__ == "__main__":
     test_missing_index()
     test_implicit_conversion()

@@ -1169,6 +1169,46 @@ def test_negative_bitmap_heap_lossy_exact_blocks_only():
     )
 
 
+# ---------------------------------------------------------------------------
+# hash_aggregate_disk_spill
+# ---------------------------------------------------------------------------
+
+
+def test_negative_hash_aggregate_disk_spill_in_memory():
+    """
+    Aggregate (Strategy=Hashed) with Disk Usage=0 — hash table fit entirely in
+    work_mem, no disk batching. hash_aggregate_disk_spill must not fire.
+    Registers (hash_aggregate_disk_spill, Aggregate) in the ledger.
+    """
+    assert_no_match(
+        "hash_aggregate_disk_spill",
+        "Aggregate",
+        [{
+            "Plan": {
+                "Node Type": "Aggregate",
+                "Strategy": "Hashed",
+                "HashAgg Batches": 1,
+                "Disk Usage": 0,
+                "Plan Rows": 5000,
+                "Actual Rows": 4800,
+                "Total Cost": 2000.0,
+                "Actual Total Time": 80.0,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 4800,
+                    "Total Cost": 500.0,
+                    "Actual Total Time": 20.0,
+                }],
+            },
+            "Planning Time": 0.3,
+            "Execution Time": 80.3,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_join_condition_function_wrap_nested_loop_plain():
     """
     Nested Loop where the inner Index Scan's Index Cond is a plain column

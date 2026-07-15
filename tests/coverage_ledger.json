@@ -28,6 +28,10 @@
     "node_type": "Function Scan"
   },
   {
+    "skill_name": "hash_aggregate_disk_spill",
+    "node_type": "Aggregate"
+  },
+  {
     "skill_name": "hash_join_build_probe_imbalance",
     "node_type": "Hash Join"
   },

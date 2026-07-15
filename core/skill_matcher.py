@@ -256,6 +256,17 @@ class Skill:
             if node.recheck_waste_ratio < rules["min_recheck_waste_ratio"]:
                 return False
 
+        # HashAggregate disk spill: Disk Usage > threshold KB means the in-memory hash
+        # table exceeded work_mem and PostgreSQL wrote batches to disk. Uses strictly-
+        # greater-than (threshold 0 = any spill at all); Disk Usage is 0 for fully
+        # in-memory aggregation. Root cause shared with requires_sort_spill: work_mem
+        # undersized for the data volume.
+        if "min_disk_usage_kb" in rules:
+            if node.disk_usage_kb is None:
+                return False
+            if node.disk_usage_kb <= rules["min_disk_usage_kb"]:
+                return False
+
         # Parallel worker shortfall: workers_launched < workers_planned means the
         # server couldn't provide all requested workers at execution time —
         # typically max_worker_processes or max_parallel_workers exhaustion.

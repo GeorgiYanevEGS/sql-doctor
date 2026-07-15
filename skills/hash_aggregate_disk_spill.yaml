@@ -1,0 +1,34 @@
+name: hash_aggregate_disk_spill
+covers_node_types: ["Aggregate"]
+detects:
+  node_type: "Aggregate"
+  min_disk_usage_kb: 0
+severity: high
+explanation: >
+  The HashAggregate (GROUP BY) operation spilled to disk: the in-memory hash
+  table grew beyond work_mem and PostgreSQL partitioned the input across multiple
+  batches written to temporary files. Each batch must be read back for a second
+  aggregation pass, multiplying I/O relative to a fully in-memory hash aggregation.
+  Banking ETL reporting queries — daily regulatory rollups, transaction summaries
+  grouped by account or merchant — are especially prone to this when the number
+  of distinct groups is large relative to work_mem.
+fix_template: >
+  Note: if sort_spill_to_disk also fired on a Sort node elsewhere in this plan,
+  both spills share the same root cause — work_mem is undersized for the data
+  volume. Raising work_mem once addresses both simultaneously.
+
+  1) Increase work_mem for this session so the hash aggregation fits in memory:
+       SET work_mem = '256MB';
+     Verify with EXPLAIN (ANALYZE, FORMAT JSON): "Disk Usage" should drop to 0
+     and "HashAgg Batches" should drop to 1 once work_mem is sufficient.
+     For reporting queries run by a specific role, set it at the role level to
+     avoid raising work_mem for all sessions globally:
+       ALTER ROLE reporting_user SET work_mem = '256MB';
+  2) If raising work_mem is not feasible, reduce GROUP BY cardinality: pre-filter
+     the input before aggregating so fewer distinct groups must be tracked in
+     memory at once, or split the aggregation into stages (partial aggregation
+     on a filtered subset first).
+  3) On PostgreSQL 13+, consider SET enable_hashagg_disk = off to force the
+     planner to choose a sort-based Group aggregate instead — it has predictable
+     memory use bounded by work_mem and does not batch to disk. This may increase
+     execution time if the sort is also expensive, so benchmark both plans first.

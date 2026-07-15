@@ -53,6 +53,13 @@ class PlanNode:
     rows_removed_by_recheck: int = 0
     exact_heap_blocks: int | None = None
     lossy_heap_blocks: int | None = None
+    # Aggregate node only: Strategy is "Hashed", "Sorted", or "Plain". HashAgg Batches
+    # and Disk Usage are populated only on Hashed aggregates that spilled to disk.
+    # Disk Usage > 0 means the hash table exceeded work_mem; root cause shared with
+    # sort_spill_to_disk (work_mem undersized for the data volume).
+    strategy: str | None = None
+    hash_agg_batches: int | None = None
+    disk_usage_kb: int | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -135,6 +142,9 @@ def _parse_node(raw: dict) -> PlanNode:
         rows_removed_by_recheck=int(raw.get("Rows Removed by Index Recheck", 0)),
         exact_heap_blocks=int(raw["Exact Heap Blocks"]) if "Exact Heap Blocks" in raw else None,
         lossy_heap_blocks=int(raw["Lossy Heap Blocks"]) if "Lossy Heap Blocks" in raw else None,
+        strategy=raw.get("Strategy"),
+        hash_agg_batches=int(raw["HashAgg Batches"]) if "HashAgg Batches" in raw else None,
+        disk_usage_kb=int(raw["Disk Usage"]) if "Disk Usage" in raw else None,
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))
