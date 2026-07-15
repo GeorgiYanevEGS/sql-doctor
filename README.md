@@ -149,11 +149,12 @@ join-condition-, build-probe-imbalance-, function-scan-cardinality-,
 bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
 correlated-subplan-awareness, sort-expression-awareness,
 unique-dedup-without-index-awareness, initplan-cost-awareness,
-initplan-aggregate-cost-awareness, any-child-spill-awareness, and
-bitmap-or-branch-awareness), provider abstraction (3 backends), schema
-introspection, validator, coverage ledger, CLI wiring, 134 tests:
+initplan-aggregate-cost-awareness, any-child-spill-awareness,
+bitmap-or-branch-awareness, and schema-verified-redundant-sort-awareness),
+provider abstraction (3 backends), schema introspection, validator, coverage
+ledger, CLI wiring, 140 tests:
 
-- **79 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **85 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
 - **35 negative tests** — each proves a specific (skill, node type) pair

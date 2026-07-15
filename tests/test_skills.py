@@ -815,7 +815,16 @@ def test_sort_key_parsed_from_explain_json():
 
 
 def test_redundant_sort_after_ordered_scan():
-    """Sort directly on top of an Index Scan — shape matches, skill fires as heuristic."""
+    """Sort over Index Scan where sort key matches index leading column — skill fires."""
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[IndexInfo(
+                name="idx_transactions_account_id",
+                definition="CREATE INDEX idx_transactions_account_id ON public.transactions USING btree (account_id)",
+            )],
+        )
+    }
     explain_json = [{
         "Plan": {
             "Node Type": "Sort",
@@ -841,7 +850,7 @@ def test_redundant_sort_after_ordered_scan():
         "Execution Time": 100.3,
     }]
     plan = parse_explain_json(explain_json)
-    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
     names = {m.skill_name for m in result.matches}
     assert "redundant_sort_after_ordered_scan" in names, (
         f"expected redundant_sort_after_ordered_scan, got {names}"
@@ -878,6 +887,258 @@ def test_no_false_positive_sort_over_seq_scan():
     names = {m.skill_name for m in result.matches}
     assert "redundant_sort_after_ordered_scan" not in names, (
         f"Sort over Seq Scan wrongly flagged as redundant, got {names}"
+    )
+
+
+def test_no_false_positive_redundant_sort_mismatched_key():
+    """
+    v1 false positive: Sort → Index Scan on (account_id) but ORDER BY amount DESC.
+    The index doesn't cover the sort key — the Sort is necessary, not redundant.
+    v2 must NOT fire because sort_key_matches_child_index rejects the mismatch.
+    """
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[IndexInfo(
+                name="idx_transactions_account_id",
+                definition="CREATE INDEX idx_transactions_account_id ON public.transactions USING btree (account_id)",
+            )],
+        )
+    }
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["amount DESC"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 1024,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 1000,
+            "Actual Rows": 1000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 110.0,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_account_id",
+                "Index Cond": "(account_id = 12345)",
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 4000.0,
+                "Actual Total Time": 85.0,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 110.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" not in names, (
+        "Sort key 'amount DESC' doesn't match index on (account_id) — "
+        "sort is necessary, must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_redundant_sort_no_schema_context():
+    """
+    Shape matches (Sort → Index Scan) but schema_context is absent — skill
+    must abstain rather than fire as a v1-style shape heuristic. A schema-
+    dependent skill must not produce findings when it can't verify them.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id"],
+            "Sort Method": "quicksort",
+            "Sort Space Used": 512,
+            "Sort Space Type": "Memory",
+            "Plan Rows": 1000,
+            "Actual Rows": 1000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 100.0,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_account_id",
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 4000.0,
+                "Actual Total Time": 80.0,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 100.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=None)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" not in names, (
+        f"skill must abstain when schema_context is absent, got {names}"
+    )
+
+
+def test_redundant_sort_multicolumn_match():
+    """Sort key (account_id, created_at) is a prefix of a 3-column composite index — skill fires."""
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[IndexInfo(
+                name="idx_transactions_composite",
+                definition="CREATE INDEX idx_transactions_composite ON public.transactions USING btree (account_id, created_at, amount)",
+            )],
+        )
+    }
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id", "created_at"],
+            "Sort Method": "quicksort",
+            "Plan Rows": 500,
+            "Actual Rows": 500,
+            "Total Cost": 3000.0,
+            "Actual Total Time": 60.0,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_composite",
+                "Plan Rows": 500,
+                "Actual Rows": 500,
+                "Total Cost": 2500.0,
+                "Actual Total Time": 50.0,
+            }],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 60.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" in names, (
+        f"expected redundant_sort_after_ordered_scan for prefix match, got {names}"
+    )
+
+
+def test_redundant_sort_desc_match():
+    """Sort key (amount DESC) matches an index defined as (amount DESC) — skill fires."""
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[IndexInfo(
+                name="idx_transactions_amount_desc",
+                definition="CREATE INDEX idx_transactions_amount_desc ON public.transactions USING btree (amount DESC)",
+            )],
+        )
+    }
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["amount DESC"],
+            "Sort Method": "quicksort",
+            "Plan Rows": 800,
+            "Actual Rows": 800,
+            "Total Cost": 4200.0,
+            "Actual Total Time": 75.0,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_amount_desc",
+                "Plan Rows": 800,
+                "Actual Rows": 800,
+                "Total Cost": 3800.0,
+                "Actual Total Time": 65.0,
+            }],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 75.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" in names, (
+        f"expected redundant_sort_after_ordered_scan for DESC match, got {names}"
+    )
+
+
+def test_redundant_sort_index_only_scan():
+    """Sort over Index Only Scan where sort key matches index — skill fires."""
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[IndexInfo(
+                name="idx_transactions_account_id",
+                definition="CREATE INDEX idx_transactions_account_id ON public.transactions USING btree (account_id)",
+            )],
+        )
+    }
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["account_id"],
+            "Sort Method": "quicksort",
+            "Plan Rows": 1000,
+            "Actual Rows": 1000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 90.0,
+            "Plans": [{
+                "Node Type": "Index Only Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_account_id",
+                "Heap Fetches": 0,
+                "Plan Rows": 1000,
+                "Actual Rows": 1000,
+                "Total Cost": 4500.0,
+                "Actual Total Time": 80.0,
+            }],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 90.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" in names, (
+        f"expected redundant_sort_after_ordered_scan for Index Only Scan, got {names}"
+    )
+
+
+def test_no_false_positive_redundant_sort_direction_mismatch():
+    """Sort key (amount ASC) vs index defined as (amount DESC) — directions differ, must NOT fire."""
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[IndexInfo(
+                name="idx_transactions_amount_desc",
+                definition="CREATE INDEX idx_transactions_amount_desc ON public.transactions USING btree (amount DESC)",
+            )],
+        )
+    }
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Sort",
+            "Sort Key": ["amount"],
+            "Sort Method": "quicksort",
+            "Plan Rows": 800,
+            "Actual Rows": 800,
+            "Total Cost": 4200.0,
+            "Actual Total Time": 75.0,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_amount_desc",
+                "Plan Rows": 800,
+                "Actual Rows": 800,
+                "Total Cost": 3800.0,
+                "Actual Total Time": 65.0,
+            }],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 75.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
+    names = {m.skill_name for m in result.matches}
+    assert "redundant_sort_after_ordered_scan" not in names, (
+        f"Sort ASC vs index DESC — sort is necessary, must not fire, got {names}"
     )
 
 

@@ -1,24 +1,21 @@
 name: redundant_sort_after_ordered_scan
 covers_node_types: ["Sort"]
-# v1 heuristic: fires on shape alone (Sort directly over an ordered scan node).
-# Does NOT verify that Sort Key matches the index's output order — that requires
-# schema introspection (IndexInfo) which is not yet threaded into skill matching.
-# Findings from this skill are a high-confidence hypothesis to verify manually,
-# not a proven-certain diagnosis. v2 (sort-key-vs-index-order comparison) is
-# deferred until schema introspection is available.
 detects:
   node_type: "Sort"
   child_node_type: ["Index Scan", "Index Only Scan"]
+  requires_schema_context: true
+  sort_key_matches_child_index: true
 severity: medium
 explanation: >
-  A Sort node sits directly on top of an Index Scan or Index Only Scan.
-  Index scans on a suitable index already return rows in a defined order,
-  so the Sort may be redundant — verify that the sort key matches the
-  index's leading columns and sort direction.
+  A Sort node sits directly on top of an Index Scan or Index Only Scan, and the
+  sort key matches the index's leading columns in the same order. The index already
+  returns rows in that order, so the Sort is redundant — the planner should eliminate
+  it automatically when the query's ORDER BY exactly matches the index order (including
+  ASC/DESC). This often indicates a missing or mismatched index direction.
 fix_template: >
-  1) Check whether the index on {table} covers the sort key in the same
-     order: \d+ {index}
-  2) If it does, confirm the query's ORDER BY matches the index order
-     (including ASC/DESC). The planner should eliminate the Sort node
-     automatically when the match is exact.
-  3) If not redundant, consider a composite index covering the sort key.
+  1) Confirm the query's ORDER BY matches the index's leading key columns
+     exactly (including ASC/DESC): run "\d+ {index}" in psql.
+  2) If the sort key and index order are identical, check whether the planner
+     hint enable_sort=off exposes the redundancy: the plan cost should be lower.
+  3) If the index direction is wrong (e.g. index is ASC but query needs DESC),
+     create a new index with the correct sort direction on {table}.

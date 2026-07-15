@@ -164,6 +164,38 @@ class Skill:
         )
 
 
+def _parse_index_columns(indexdef: str) -> list[str]:
+    """
+    Extract the ordered key-column list from a pg_indexes.indexdef string.
+    Returns one entry per column: lowercased name/expression optionally
+    followed by ' desc'. ASC is normalized to no suffix; NULLS FIRST/LAST
+    are stripped. INCLUDE (...) and WHERE ... clauses are removed first so
+    covering and partial indexes don't corrupt the column list.
+    """
+    clean = re.sub(r'\s+INCLUDE\s*\([^)]*\)', '', indexdef, flags=re.IGNORECASE)
+    clean = re.sub(r'\s+WHERE\s+.*$', '', clean, flags=re.IGNORECASE)
+    m = re.search(r'\((.+)\)\s*$', clean, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return []
+    result = []
+    for col in m.group(1).split(','):
+        col = re.sub(r'\s+NULLS\s+(?:FIRST|LAST)\s*$', '', col.strip(), flags=re.IGNORECASE).strip()
+        col = re.sub(r'\s+ASC\s*$', '', col, flags=re.IGNORECASE).strip()
+        result.append(col.lower())
+    return result
+
+
+def _normalize_sort_expr(sort_entry: str) -> str:
+    """
+    Normalize a PlanNode.sort_key entry for comparison with _parse_index_columns()
+    output. Strips NULLS FIRST/LAST, removes explicit ASC (implicit default),
+    keeps DESC, lowercases the result.
+    """
+    s = re.sub(r'\s+NULLS\s+(?:FIRST|LAST)\s*$', '', sort_entry.strip(), flags=re.IGNORECASE).strip()
+    s = re.sub(r'\s+ASC\s*$', '', s, flags=re.IGNORECASE).strip()
+    return s.lower()
+
+
 def _evaluate_rules(
     node: PlanNode,
     rules: dict,
@@ -319,6 +351,30 @@ def _evaluate_rules(
         if matched_child is None:
             return False
         if matched_child.actual_rows < rules["child_min_actual_rows"]:
+            return False
+
+    # Sort key vs index key alignment: fire only when the Sort node's sort_key is a
+    # left-prefix of the index's ordered column list. Without this check, a Sort over
+    # an Index Scan fires even when the sort order is completely different from the
+    # index order — the index can't eliminate the sort. Placed after child_node_type
+    # and child_min_actual_rows so matched_child is already resolved. Requires
+    # schema_context (guarded at the top via requires_schema_context in the YAML).
+    if rules.get("sort_key_matches_child_index"):
+        if schema_context is None:
+            return False
+        if matched_child is None or not matched_child.relation_name or not matched_child.index_name:
+            return False
+        table_schema = schema_context.get(matched_child.relation_name)
+        if table_schema is None:
+            return False
+        idx = next((i for i in table_schema.indexes if i.name == matched_child.index_name), None)
+        if idx is None:
+            return False
+        index_cols = _parse_index_columns(idx.definition)
+        sort_cols = [_normalize_sort_expr(k) for k in node.sort_key]
+        if not sort_cols or not index_cols:
+            return False
+        if index_cols[:len(sort_cols)] != sort_cols:
             return False
 
     # Build/probe row count ratio: children[1] is the Hash node (build side),
