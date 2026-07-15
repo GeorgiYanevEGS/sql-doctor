@@ -1328,6 +1328,71 @@ def test_negative_unique_without_index_small_sort():
     )
 
 
+def test_negative_merge_join_child_sort_spill_no_spill():
+    """
+    Merge Join where neither Sort child spilled (both quicksort) —
+    merge_join_child_sort_spill must not fire.
+    Registers (merge_join_child_sort_spill, Merge Join) in the ledger.
+    """
+    assert_no_match(
+        "merge_join_child_sort_spill",
+        "Merge Join",
+        [{
+            "Plan": {
+                "Node Type": "Merge Join",
+                "Merge Cond": "(t.account_id = m.id)",
+                "Plan Rows": 50000,
+                "Actual Rows": 50000,
+                "Total Cost": 5000.0,
+                "Actual Total Time": 300.0,
+                "Plans": [
+                    {
+                        "Node Type": "Sort",
+                        "Sort Key": ["t.account_id"],
+                        "Sort Method": "quicksort",
+                        "Sort Space Used": 2048,
+                        "Sort Space Type": "Memory",
+                        "Plan Rows": 50000,
+                        "Actual Rows": 50000,
+                        "Total Cost": 3000.0,
+                        "Actual Total Time": 200.0,
+                        "Plans": [{
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "transactions",
+                            "Plan Rows": 50000,
+                            "Actual Rows": 50000,
+                            "Total Cost": 1500.0,
+                            "Actual Total Time": 100.0,
+                        }],
+                    },
+                    {
+                        "Node Type": "Sort",
+                        "Sort Key": ["m.id"],
+                        "Sort Method": "quicksort",
+                        "Sort Space Used": 512,
+                        "Sort Space Type": "Memory",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 800.0,
+                        "Actual Total Time": 50.0,
+                        "Plans": [{
+                            "Node Type": "Seq Scan",
+                            "Relation Name": "merchants",
+                            "Plan Rows": 5000,
+                            "Actual Rows": 5000,
+                            "Total Cost": 300.0,
+                            "Actual Total Time": 25.0,
+                        }],
+                    },
+                ],
+            },
+            "Planning Time": 0.5,
+            "Execution Time": 300.5,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_sort_expression_no_index_plain_sort():
     """
     Sort with plain column sort key (no function call) — sort_expression_no_index

@@ -60,6 +60,10 @@
     "node_type": "Nested Loop"
   },
   {
+    "skill_name": "merge_join_child_sort_spill",
+    "node_type": "Merge Join"
+  },
+  {
     "skill_name": "missing_index",
     "node_type": "Seq Scan"
   },

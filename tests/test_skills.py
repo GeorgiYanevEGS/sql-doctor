@@ -2208,6 +2208,192 @@ def test_no_false_positive_hash_agg_no_spill():
     )
 
 
+def test_merge_join_child_sort_spill_outer():
+    """Merge Join where the outer Sort child spilled to disk — must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Merge Join",
+            "Merge Cond": "(t.account_id = m.id)",
+            "Plan Rows": 500000,
+            "Actual Rows": 500000,
+            "Total Cost": 20000.0,
+            "Actual Total Time": 3500.0,
+            "Plans": [
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["t.account_id"],
+                    "Sort Method": "external merge",
+                    "Sort Space Used": 102400,
+                    "Sort Space Type": "Disk",
+                    "Plan Rows": 500000,
+                    "Actual Rows": 500000,
+                    "Total Cost": 15000.0,
+                    "Actual Total Time": 2000.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 500000,
+                        "Actual Rows": 500000,
+                        "Total Cost": 8000.0,
+                        "Actual Total Time": 800.0,
+                    }],
+                },
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["m.id"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 1024,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 100.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "merchants",
+                        "Plan Rows": 10000,
+                        "Actual Rows": 10000,
+                        "Total Cost": 500.0,
+                        "Actual Total Time": 50.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.8,
+        "Execution Time": 3500.8,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "merge_join_child_sort_spill" in names, (
+        f"expected merge_join_child_sort_spill (outer Sort spilled), got {names}"
+    )
+
+
+def test_merge_join_child_sort_spill_inner():
+    """Merge Join where only the INNER Sort spilled — proves any_child checks all children, not just first."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Merge Join",
+            "Merge Cond": "(t.account_id = m.id)",
+            "Plan Rows": 500000,
+            "Actual Rows": 500000,
+            "Total Cost": 20000.0,
+            "Actual Total Time": 3500.0,
+            "Plans": [
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["t.account_id"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 4096,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 500000,
+                    "Actual Rows": 500000,
+                    "Total Cost": 15000.0,
+                    "Actual Total Time": 800.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 500000,
+                        "Actual Rows": 500000,
+                        "Total Cost": 8000.0,
+                        "Actual Total Time": 600.0,
+                    }],
+                },
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["m.id"],
+                    "Sort Method": "external merge",
+                    "Sort Space Used": 204800,
+                    "Sort Space Type": "Disk",
+                    "Plan Rows": 800000,
+                    "Actual Rows": 800000,
+                    "Total Cost": 18000.0,
+                    "Actual Total Time": 2800.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "merchants",
+                        "Plan Rows": 800000,
+                        "Actual Rows": 800000,
+                        "Total Cost": 9000.0,
+                        "Actual Total Time": 900.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.9,
+        "Execution Time": 3500.9,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "merge_join_child_sort_spill" in names, (
+        f"expected merge_join_child_sort_spill (inner Sort spilled), got {names}"
+    )
+
+
+def test_no_false_positive_merge_join_no_spill():
+    """Merge Join where neither Sort child spilled — both quicksort, must not fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Merge Join",
+            "Merge Cond": "(t.account_id = m.id)",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 5000.0,
+            "Actual Total Time": 300.0,
+            "Plans": [
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["t.account_id"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 2048,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 50000,
+                    "Actual Rows": 50000,
+                    "Total Cost": 3000.0,
+                    "Actual Total Time": 200.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Plan Rows": 50000,
+                        "Actual Rows": 50000,
+                        "Total Cost": 1500.0,
+                        "Actual Total Time": 100.0,
+                    }],
+                },
+                {
+                    "Node Type": "Sort",
+                    "Sort Key": ["m.id"],
+                    "Sort Method": "quicksort",
+                    "Sort Space Used": 512,
+                    "Sort Space Type": "Memory",
+                    "Plan Rows": 5000,
+                    "Actual Rows": 5000,
+                    "Total Cost": 800.0,
+                    "Actual Total Time": 50.0,
+                    "Plans": [{
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "merchants",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 300.0,
+                        "Actual Total Time": 25.0,
+                    }],
+                },
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 300.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "merge_join_child_sort_spill" not in names, (
+        f"neither Sort spilled, should not fire merge_join_child_sort_spill, got {names}"
+    )
+
+
 def test_initplan_expensive():
     """InitPlan Aggregate consuming 40% of execution time — must fire."""
     explain_json = [{

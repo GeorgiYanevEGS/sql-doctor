@@ -1,0 +1,35 @@
+name: merge_join_child_sort_spill
+covers_node_types: ["Merge Join"]
+detects:
+  node_type: "Merge Join"
+  any_child:
+    node_type: "Sort"
+    sort_method_equals: "external merge"
+severity: high
+explanation: >
+  At least one of the Sort nodes feeding this Merge Join spilled to disk
+  using external merge. Merge Join requires both input streams to be sorted
+  on the join key before it can produce output — if either Sort exceeds
+  work_mem, it must write sorted runs to disk and merge them back, adding
+  significant I/O to an operation that would otherwise run entirely in memory.
+  A spilling Sort here means the planner underestimated the memory required for
+  the join side's sorted input, or work_mem is globally too low for the data
+  volume this query regularly handles.
+fix_template: >
+  1) Increase work_mem for this session (or globally if this query runs
+     frequently) so the Sort node can hold its input in memory:
+       SET work_mem = '256MB';  -- tune to the spilling Sort's actual row count
+       EXPLAIN (ANALYZE, BUFFERS) <query>;
+     Confirm the Sort Method changes from "external merge" to "quicksort" or
+     "top-N heapsort".
+
+  2) If memory cannot be increased, consider whether the join could be
+     restructured as a Hash Join — Hash Join's work_mem usage is bounded by
+     the build side (usually the smaller table), whereas Merge Join must sort
+     both sides. SET enable_mergejoin = off; SET enable_hashjoin = on; to test
+     the alternative plan cost without changing the query.
+
+  3) If this Merge Join was chosen because the inputs arrive pre-sorted from
+     an index scan (Index Scan with an appropriate sort order), verify that the
+     relevant indexes still exist and are not bloated — a bloated index can
+     push the planner toward a Seq Scan + Sort path that then spills.
