@@ -30,6 +30,7 @@ class TableSchema:
     columns: list[ColumnInfo] = field(default_factory=list)
     indexes: list[IndexInfo] = field(default_factory=list)
     row_estimate: int | None = None
+    partition_key: list[str] | None = None
 
     @property
     def column_names(self) -> set[str]:

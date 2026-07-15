@@ -2400,6 +2400,48 @@ def test_parse_hash_agg_fields():
     assert node.disk_usage_kb == 8192, f"expected disk_usage_kb=8192, got {node.disk_usage_kb!r}"
 
 
+def test_parse_subplans_removed():
+    """Append node with Subplans Removed field is parsed into PlanNode.subplans_removed."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Append",
+            "Subplans Removed": 2,
+            "Plan Rows": 20000,
+            "Actual Rows": 20000,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 150.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions_2024_03",
+                    "Parent Relationship": "Member",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 75.0,
+                },
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions_2024_04",
+                    "Parent Relationship": "Member",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 75.0,
+                },
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 150.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    append_node = plan.root
+    assert append_node.subplans_removed == 2, (
+        f"expected subplans_removed=2, got {append_node.subplans_removed!r}"
+    )
+    assert append_node.subplans_removed is not None
+
+
 def test_hash_aggregate_disk_spill():
     """
     Aggregate (Strategy=Hashed) with Disk Usage=8192 KB — hash table exceeded
@@ -3696,6 +3738,239 @@ def test_schema_unavailable_coverage_status():
     assert result.node_type_coverage.get("Sort") == CoverageStatus.SCHEMA_UNAVAILABLE, (
         f"expected SCHEMA_UNAVAILABLE for schema-dependent skill with no schema_context, "
         f"got {result.node_type_coverage}"
+    )
+
+
+def _make_partition_schema(partition_names: list[str], partition_key: list[str]) -> dict:
+    """Build schema_context dict keyed by partition table name with a given partition_key."""
+    return {
+        name: TableSchema(
+            table_name=name,
+            columns=[],
+            indexes=[],
+            row_estimate=10000,
+            partition_key=partition_key,
+        )
+        for name in partition_names
+    }
+
+
+def test_append_partition_pruning_failure():
+    """
+    Append over 4 partitions, Subplans Removed: 0, filter on partition key column
+    (created_at), schema_context has partition_key=["created_at"] → must fire.
+    Represents scenario 4: enable_partition_pruning=off with a narrow filter.
+    """
+    partition_names = [
+        "transactions_2024_01",
+        "transactions_2024_02",
+        "transactions_2024_03",
+        "transactions_2024_04",
+    ]
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Append",
+            "Subplans Removed": 0,
+            "Plan Rows": 40000,
+            "Actual Rows": 40000,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": name,
+                    "Parent Relationship": "Member",
+                    "Filter": "(created_at >= '2024-01-01' AND created_at < '2024-02-01')",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 150.0,
+                }
+                for name in partition_names
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 600.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    schema_ctx = _make_partition_schema(partition_names, ["created_at"])
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema_ctx)
+    names = {m.skill_name for m in result.matches}
+    assert "append_partition_pruning_failure" in names, (
+        f"expected append_partition_pruning_failure for 4-partition Append with 0 removed "
+        f"and filter on partition key, got {names}"
+    )
+
+
+def test_no_false_positive_pruning_filter_not_on_partition_key():
+    """
+    Append over 4 partitions, Subplans Removed: 0, but filter is on 'merchant'
+    (NOT the partition key 'created_at') → skill must NOT fire (scenario 3).
+    """
+    partition_names = [
+        "transactions_2024_01",
+        "transactions_2024_02",
+        "transactions_2024_03",
+        "transactions_2024_04",
+    ]
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Append",
+            "Subplans Removed": 0,
+            "Plan Rows": 40000,
+            "Actual Rows": 40000,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": name,
+                    "Parent Relationship": "Member",
+                    "Filter": "(merchant = 'OMV')",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 150.0,
+                }
+                for name in partition_names
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 600.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    schema_ctx = _make_partition_schema(partition_names, ["created_at"])
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema_ctx)
+    names = {m.skill_name for m in result.matches}
+    assert "append_partition_pruning_failure" not in names, (
+        f"filter on non-partition-key column 'merchant' must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_pruning_no_schema_context():
+    """
+    Same shape as the positive test but schema_context=None →
+    requires_schema_context gate must suppress the skill.
+    """
+    partition_names = [
+        "transactions_2024_01",
+        "transactions_2024_02",
+        "transactions_2024_03",
+        "transactions_2024_04",
+    ]
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Append",
+            "Subplans Removed": 0,
+            "Plan Rows": 40000,
+            "Actual Rows": 40000,
+            "Total Cost": 8000.0,
+            "Actual Total Time": 600.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": name,
+                    "Parent Relationship": "Member",
+                    "Filter": "(created_at >= '2024-01-01' AND created_at < '2024-02-01')",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 150.0,
+                }
+                for name in partition_names
+            ],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 600.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=None)
+    names = {m.skill_name for m in result.matches}
+    assert "append_partition_pruning_failure" not in names, (
+        f"schema_context=None must suppress schema-dependent skill, got {names}"
+    )
+
+
+def test_no_false_positive_pruning_few_children():
+    """
+    Append with only 2 partition children — below min_children guard → must NOT fire.
+    Prevents false positives on legitimately small two-partition tables.
+    """
+    partition_names = ["transactions_2024_01", "transactions_2024_02"]
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Append",
+            "Subplans Removed": 0,
+            "Plan Rows": 20000,
+            "Actual Rows": 20000,
+            "Total Cost": 4000.0,
+            "Actual Total Time": 300.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": name,
+                    "Parent Relationship": "Member",
+                    "Filter": "(created_at >= '2024-01-01' AND created_at < '2024-03-01')",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 150.0,
+                }
+                for name in partition_names
+            ],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 300.3,
+    }]
+    plan = parse_explain_json(explain_json)
+    schema_ctx = _make_partition_schema(partition_names, ["created_at"])
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema_ctx)
+    names = {m.skill_name for m in result.matches}
+    assert "append_partition_pruning_failure" not in names, (
+        f"only 2 partitions (< min_children) must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_pruning_high_prune_ratio():
+    """
+    Append with Subplans Removed: 3 and 1 child remaining — pruning ratio 3/4 = 0.75
+    exceeds max_pruning_ratio, so the planner DID prune aggressively → must NOT fire.
+    """
+    partition_names = ["transactions_2024_04"]
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Append",
+            "Subplans Removed": 3,
+            "Plan Rows": 10000,
+            "Actual Rows": 10000,
+            "Total Cost": 2000.0,
+            "Actual Total Time": 150.0,
+            "Plans": [
+                {
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions_2024_04",
+                    "Parent Relationship": "Member",
+                    "Filter": "(created_at >= '2024-04-01' AND created_at < '2024-05-01')",
+                    "Plan Rows": 10000,
+                    "Actual Rows": 10000,
+                    "Total Cost": 2000.0,
+                    "Actual Total Time": 150.0,
+                }
+            ],
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 150.2,
+    }]
+    plan = parse_explain_json(explain_json)
+    all_partition_names = [
+        "transactions_2024_01", "transactions_2024_02",
+        "transactions_2024_03", "transactions_2024_04",
+    ]
+    schema_ctx = _make_partition_schema(all_partition_names, ["created_at"])
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema_ctx)
+    names = {m.skill_name for m in result.matches}
+    assert "append_partition_pruning_failure" not in names, (
+        f"high pruning ratio (3/4 removed) must not fire — pruning worked, got {names}"
     )
 
 

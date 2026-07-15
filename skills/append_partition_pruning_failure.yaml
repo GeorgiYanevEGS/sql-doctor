@@ -1,0 +1,33 @@
+name: append_partition_pruning_failure
+covers_node_types: ["Append"]
+detects:
+  node_type: "Append"
+  requires_schema_context: true
+  min_children: 4
+  max_pruning_ratio: 0.1
+  partition_key_filter_intersects: true
+severity: high
+explanation: >
+  An Append node over a partitioned table scanned all (or nearly all) partitions
+  despite a query filter that references the partition key. PostgreSQL's runtime
+  partition pruning should have eliminated irrelevant partitions before execution,
+  but Subplans Removed: 0 indicates no pruning occurred. The most common causes are
+  enable_partition_pruning=off (session or global), a filter expression that is not
+  prunable (e.g. a function wrap on the partition key such as date_trunc), or a
+  mismatch between the filter value's type and the partition key's declared type.
+  Known limitation: a broad range query that legitimately spans all partitions also
+  produces Subplans Removed: 0 and a filter on the partition key — this skill cannot
+  distinguish that scenario from a genuine pruning failure using plan structure alone.
+fix_template: >
+  1. Verify enable_partition_pruning is on:
+     SHOW enable_partition_pruning;
+
+  2. Confirm the filter references the partition key directly without function wraps:
+     -- Bad:  WHERE date_trunc('month', created_at) = '2024-01-01'
+     -- Good: WHERE created_at >= '2024-01-01' AND created_at < '2024-02-01'
+
+  3. Check for implicit type mismatches between the filter literal and the partition
+     key column type (e.g. filtering a timestamptz column with a text literal).
+
+  4. If the query intentionally spans all partitions, this finding can be ignored —
+     it represents a known false positive for broad-range partition scans.

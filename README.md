@@ -109,7 +109,9 @@ sql-doctor/
 │   ├── unique_without_index.yaml
 │   ├── initplan_expensive.yaml
 │   ├── merge_join_child_sort_spill.yaml
-│   └── bitmap_or_missing_index_branch.yaml
+│   ├── bitmap_or_missing_index_branch.yaml
+│   ├── modify_table_seq_scan.yaml
+│   └── append_partition_pruning_failure.yaml
 └── tests/
     ├── coverage_helpers.py         # assert_no_match(), VacuousTestError — ledger write contract
     ├── coverage_ledger.json        # committed build artifact — (skill, node_type) negative-test registry
@@ -143,19 +145,20 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 26 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 27 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
 join-condition-, build-probe-imbalance-, function-scan-cardinality-,
 bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
 correlated-subplan-awareness, sort-expression-awareness,
 unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness,
-bitmap-or-branch-awareness, schema-verified-redundant-sort-awareness, and
-modify-table-unindexed-scan-awareness),
+bitmap-or-branch-awareness, schema-verified-redundant-sort-awareness,
+modify-table-unindexed-scan-awareness, and
+partition-pruning-failure-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 150 tests:
+ledger, CLI wiring, 156 tests:
 
-- **92 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **98 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
 - **36 negative tests** — each proves a specific (skill, node type) pair
@@ -233,6 +236,14 @@ What's next (not yet done):
   the regex or switching to a general "any expression that isn't a plain column
   reference" heuristic is the fix, but both carry higher false-positive risk and
   are deferred.
+
+- **`append_partition_pruning_failure` cannot distinguish a broad-range legitimate
+  full-partition scan from a `enable_partition_pruning=off` failure**. Both produce
+  an Append node with `Subplans Removed: 0` and a filter referencing the partition key.
+  The skill fires on both (the second is correct; the first is a false positive). The
+  fix requires inspecting the filter range against the partition boundaries — information
+  not present in the EXPLAIN JSON. Treat findings as a hypothesis to verify with
+  `SHOW enable_partition_pruning` before acting.
 
 - **Validator can't yet distinguish "hallucinated existing object" from
   "proposed new object name"**. If the LLM suggests `CREATE INDEX

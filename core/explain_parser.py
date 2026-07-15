@@ -64,6 +64,9 @@ class PlanNode:
     # node. Key value: "SubPlan" identifies a correlated subquery node — one that is
     # re-executed once per outer row rather than once per plan.
     parent_relationship: str | None = None
+    # Append / MergeAppend only: number of child subplans that runtime partition pruning
+    # eliminated before execution. 0 means no pruning occurred despite filter conditions.
+    subplans_removed: int | None = None
     children: list["PlanNode"] = field(default_factory=list)
 
     @property
@@ -150,6 +153,7 @@ def _parse_node(raw: dict) -> PlanNode:
         hash_agg_batches=int(raw["HashAgg Batches"]) if "HashAgg Batches" in raw else None,
         disk_usage_kb=int(raw["Disk Usage"]) if "Disk Usage" in raw else None,
         parent_relationship=raw.get("Parent Relationship"),
+        subplans_removed=int(raw["Subplans Removed"]) if "Subplans Removed" in raw else None,
     )
     for child_raw in raw.get("Plans", []):
         node.children.append(_parse_node(child_raw))

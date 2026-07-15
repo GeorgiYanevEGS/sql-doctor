@@ -500,6 +500,42 @@ def _evaluate_rules(
                 if has_index:
                     return False
 
+    if "min_children" in rules:
+        if len(node.children) < rules["min_children"]:
+            return False
+
+    if "max_pruning_ratio" in rules:
+        removed = node.subplans_removed if node.subplans_removed is not None else 0
+        total = removed + len(node.children)
+        if total == 0:
+            return False
+        pruning_ratio = removed / total
+        if pruning_ratio > rules["max_pruning_ratio"]:
+            return False
+
+    if rules.get("partition_key_filter_intersects"):
+        if schema_context is None:
+            return False
+        filter_cols: set[str] = set()
+        for child in node.children:
+            if child.filter_condition:
+                for fm in re.finditer(
+                    r'\b(\w+)\s*(?:[><=!]+|IS\b|BETWEEN\b|LIKE\b|IN\s*\()',
+                    child.filter_condition,
+                    re.IGNORECASE,
+                ):
+                    filter_cols.add(fm.group(1).lower())
+        found_intersection = False
+        for child in node.children:
+            table_schema = schema_context.get(child.relation_name or "")
+            if table_schema is not None and table_schema.partition_key:
+                pk_cols = {c.lower() for c in table_schema.partition_key}
+                if filter_cols & pk_cols:
+                    found_intersection = True
+                    break
+        if not found_intersection:
+            return False
+
     # any_child: fires if at least one immediate child satisfies the nested rules dict.
     # Evaluates _evaluate_rules() independently against every child — an existential
     # quantifier across children, not first-match-and-inspect like child_node_type.
