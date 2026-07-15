@@ -1,0 +1,31 @@
+name: modify_table_seq_scan
+covers_node_types: ["ModifyTable"]
+detects:
+  node_type: "ModifyTable"
+  any_descendant:
+    node_type: "Seq Scan"
+    min_actual_rows: 10000
+  any_descendant_max_depth: 3
+severity: high
+explanation: >
+  A ModifyTable (UPDATE or DELETE) node has a Seq Scan descendant that performed
+  a full table scan across at least 10,000 rows. Unlike an equivalent SELECT, a
+  full-table scan under an UPDATE or DELETE holds row-level locks for the entire
+  scan duration — a slow unindexed scan can block concurrent writers and readers
+  on the same table for the full execution time. In banking ETL workloads this is
+  a correctness and concurrency risk, not just a performance problem: long-running
+  batch UPDATEs without an indexed WHERE clause are a common source of production
+  lock contention and transaction timeout cascades.
+fix_template: >
+  Identify the column referenced in the Seq Scan's Filter condition and add a
+  supporting index on {table}:
+
+    CREATE INDEX CONCURRENTLY idx_{table}_<filter_column> ON {table} (<filter_column>);
+
+  For large ETL batch updates, also consider:
+  1) Processing in smaller batches (e.g. WHERE created_at BETWEEN x AND y) to
+     reduce lock hold time even when a full scan is unavoidable.
+  2) Partitioning {table} by the filter column so UPDATE can prune partitions
+     rather than scanning the full table.
+  3) Using SKIP LOCKED or advisory locks if concurrent batch writers compete on
+     the same rows.

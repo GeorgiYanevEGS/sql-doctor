@@ -3522,6 +3522,145 @@ def test_schema_context_gate_passes_when_provided():
     )
 
 
+def test_modify_table_seq_scan():
+    """ModifyTable (UPDATE) with a direct Seq Scan child scanning many rows — must fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "ModifyTable",
+            "Operation": "Update",
+            "Relation Name": "transactions",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 9000.0,
+            "Actual Total Time": 820.0,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "transactions",
+                "Filter": "(status = 'PENDING')",
+                "Plan Rows": 50000,
+                "Actual Rows": 50000,
+                "Total Cost": 8500.0,
+                "Actual Total Time": 780.0,
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 820.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "modify_table_seq_scan" in names, (
+        f"expected modify_table_seq_scan for UPDATE with large Seq Scan child, got {names}"
+    )
+
+
+def test_modify_table_seq_scan_deep():
+    """
+    ModifyTable → Subquery Scan → Seq Scan (depth 2). any_descendant must reach
+    through the interposed Subquery Scan and still fire.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "ModifyTable",
+            "Operation": "Update",
+            "Relation Name": "transactions",
+            "Plan Rows": 50000,
+            "Actual Rows": 50000,
+            "Total Cost": 9500.0,
+            "Actual Total Time": 850.0,
+            "Plans": [{
+                "Node Type": "Subquery Scan",
+                "Alias": "t",
+                "Plan Rows": 50000,
+                "Actual Rows": 50000,
+                "Total Cost": 9000.0,
+                "Actual Total Time": 820.0,
+                "Plans": [{
+                    "Node Type": "Seq Scan",
+                    "Relation Name": "transactions",
+                    "Filter": "(status = 'PENDING')",
+                    "Plan Rows": 50000,
+                    "Actual Rows": 50000,
+                    "Total Cost": 8500.0,
+                    "Actual Total Time": 780.0,
+                }],
+            }],
+        },
+        "Planning Time": 0.5,
+        "Execution Time": 850.5,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "modify_table_seq_scan" in names, (
+        f"expected modify_table_seq_scan for UPDATE with Seq Scan at depth 2, got {names}"
+    )
+
+
+def test_no_false_positive_modify_table_index_scan():
+    """ModifyTable with an Index Scan descendant — plan uses an index, must NOT fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "ModifyTable",
+            "Operation": "Update",
+            "Relation Name": "transactions",
+            "Plan Rows": 1,
+            "Actual Rows": 1,
+            "Total Cost": 10.5,
+            "Actual Total Time": 0.8,
+            "Plans": [{
+                "Node Type": "Index Scan",
+                "Relation Name": "transactions",
+                "Index Name": "idx_transactions_id",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 8.3,
+                "Actual Total Time": 0.5,
+            }],
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 1.1,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "modify_table_seq_scan" not in names, (
+        f"UPDATE via Index Scan must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_modify_table_small_seq_scan():
+    """ModifyTable with a Seq Scan that only touches a few rows — below threshold, must NOT fire."""
+    explain_json = [{
+        "Plan": {
+            "Node Type": "ModifyTable",
+            "Operation": "Update",
+            "Relation Name": "txn_statuses",
+            "Plan Rows": 12,
+            "Actual Rows": 12,
+            "Total Cost": 5.0,
+            "Actual Total Time": 0.3,
+            "Plans": [{
+                "Node Type": "Seq Scan",
+                "Relation Name": "txn_statuses",
+                "Filter": "(code = 'X')",
+                "Plan Rows": 12,
+                "Actual Rows": 12,
+                "Total Cost": 2.0,
+                "Actual Total Time": 0.1,
+            }],
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 0.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    names = {m.skill_name for m in result.matches}
+    assert "modify_table_seq_scan" not in names, (
+        f"small Seq Scan under UPDATE (12 rows < threshold) must not fire, got {names}"
+    )
+
+
 def test_schema_unavailable_coverage_status():
     """
     A schema-dependent skill covering a node type, called with schema_context=None,

@@ -143,21 +143,22 @@ grounded fallback path when no skill matches.
 
 ## Status: MVP, validated against a real database
 
-What's implemented: parser, 25 skills (with selectivity-, loop-, spill-,
+What's implemented: parser, 26 skills (with selectivity-, loop-, spill-,
 child-shape-, low-estimate-, heap-fetch-, outer-child-estimate-, parallel-worker-,
 join-condition-, build-probe-imbalance-, function-scan-cardinality-,
 bitmap-lossy-page-, planning-time-dominance-, hash-aggregate-disk-spill-,
 correlated-subplan-awareness, sort-expression-awareness,
 unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness,
-bitmap-or-branch-awareness, and schema-verified-redundant-sort-awareness),
+bitmap-or-branch-awareness, schema-verified-redundant-sort-awareness, and
+modify-table-unindexed-scan-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 145 tests:
+ledger, CLI wiring, 150 tests:
 
-- **88 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **92 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
-- **35 negative tests** — each proves a specific (skill, node type) pair
+- **36 negative tests** — each proves a specific (skill, node type) pair
   doesn't fire on a real negative example; these populate the committed
   coverage ledger.
 - **6 coverage-helper tests** — test the ledger write contract itself

@@ -201,6 +201,31 @@ def _normalize_sort_expr(sort_entry: str) -> str:
     return s.lower()
 
 
+def _any_descendant(
+    node: PlanNode,
+    rules: dict,
+    table_row_counts: dict[str, int] | None,
+    execution_time_ms: float,
+    schema_context: dict[str, TableSchema] | None,
+    current_depth: int,
+    max_depth: int,
+) -> bool:
+    """
+    Return True if any descendant of node (up to max_depth levels) satisfies rules.
+    current_depth tracks how many levels below the original node we are; the caller
+    starts at 0. Short-circuits on first match via any() semantics.
+    O(subtree-size × max_depth) in the worst case — keep max_depth small (≤5).
+    """
+    if current_depth >= max_depth:
+        return False
+    for child in node.children:
+        if _evaluate_rules(child, rules, table_row_counts, execution_time_ms, schema_context):
+            return True
+        if _any_descendant(child, rules, table_row_counts, execution_time_ms, schema_context, current_depth + 1, max_depth):
+            return True
+    return False
+
+
 def _evaluate_rules(
     node: PlanNode,
     rules: dict,
@@ -486,6 +511,17 @@ def _evaluate_rules(
             _evaluate_rules(c, child_rules, table_row_counts, execution_time_ms, schema_context)
             for c in node.children
         ):
+            return False
+
+    # any_descendant: fires if any node in the full subtree (up to any_descendant_max_depth
+    # levels) satisfies the nested rules dict. Use when the target node may be separated
+    # from its root by interposed plan nodes (e.g. Subquery Scan, Result) whose depth
+    # is not fixed. any_descendant_max_depth defaults to 5; keep it small to avoid
+    # O(nodes × subtree-size) cost at scale (see _any_descendant docstring).
+    if "any_descendant" in rules:
+        desc_rules = rules["any_descendant"]
+        max_depth = rules.get("any_descendant_max_depth", 5)
+        if not _any_descendant(node, desc_rules, table_row_counts, execution_time_ms, schema_context, 0, max_depth):
             return False
 
     return True

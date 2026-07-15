@@ -1533,6 +1533,41 @@ def test_negative_merge_join_child_sort_spill_no_spill():
     )
 
 
+def test_negative_modify_table_seq_scan_index_child():
+    """
+    ModifyTable with an Index Scan descendant — no Seq Scan present.
+    modify_table_seq_scan must not fire.
+    Registers (modify_table_seq_scan, ModifyTable) in the ledger.
+    """
+    assert_no_match(
+        "modify_table_seq_scan",
+        "ModifyTable",
+        [{
+            "Plan": {
+                "Node Type": "ModifyTable",
+                "Operation": "Update",
+                "Relation Name": "transactions",
+                "Plan Rows": 1,
+                "Actual Rows": 1,
+                "Total Cost": 10.5,
+                "Actual Total Time": 0.8,
+                "Plans": [{
+                    "Node Type": "Index Scan",
+                    "Relation Name": "transactions",
+                    "Index Name": "idx_transactions_id",
+                    "Plan Rows": 1,
+                    "Actual Rows": 1,
+                    "Total Cost": 8.3,
+                    "Actual Total Time": 0.5,
+                }],
+            },
+            "Planning Time": 0.3,
+            "Execution Time": 1.1,
+        }],
+        SKILLS,
+    )
+
+
 def test_negative_sort_expression_no_index_plain_sort():
     """
     Sort with plain column sort key (no function call) — sort_expression_no_index
