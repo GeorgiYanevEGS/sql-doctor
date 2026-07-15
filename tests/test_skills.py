@@ -2471,7 +2471,18 @@ def test_no_false_positive_hash_agg_no_spill():
 
 
 def test_bitmap_or_missing_index_branch():
-    """BitmapOr with one Seq Scan child — one OR-branch lacks an index, must fire."""
+    """BitmapOr → Seq Scan on txn_type with NO index on txn_type — genuine gap, must fire."""
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[
+                IndexInfo(
+                    name="idx_transactions_status",
+                    definition="CREATE INDEX idx_transactions_status ON public.transactions USING btree (status)",
+                ),
+            ],
+        )
+    }
     explain_json = [{
         "Plan": {
             "Node Type": "Bitmap Heap Scan",
@@ -2511,10 +2522,130 @@ def test_bitmap_or_missing_index_branch():
         "Execution Time": 450.4,
     }]
     plan = parse_explain_json(explain_json)
-    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
     names = {m.skill_name for m in result.matches}
     assert "bitmap_or_missing_index_branch" in names, (
-        f"expected bitmap_or_missing_index_branch (Seq Scan child of BitmapOr), got {names}"
+        f"expected bitmap_or_missing_index_branch (Seq Scan child of BitmapOr, no index on txn_type), got {names}"
+    )
+
+
+def test_no_false_positive_bitmap_or_seq_scan_indexed_column():
+    """
+    v1 false positive: BitmapOr → Seq Scan on 'status' but status HAS an index.
+    Planner chose Seq Scan for selectivity reasons (e.g. ~92% of rows match).
+    v2 must NOT fire — an index exists, this is a planner decision, not a gap.
+    """
+    schema = {
+        "transactions": TableSchema(
+            table_name="transactions",
+            indexes=[
+                IndexInfo(
+                    name="idx_transactions_status",
+                    definition="CREATE INDEX idx_transactions_status ON public.transactions USING btree (status)",
+                ),
+                IndexInfo(
+                    name="idx_transactions_merchant",
+                    definition="CREATE INDEX idx_transactions_merchant ON public.transactions USING btree (merchant)",
+                ),
+            ],
+        )
+    }
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 95000,
+            "Actual Rows": 95000,
+            "Total Cost": 9000.0,
+            "Actual Total Time": 680.0,
+            "Plans": [{
+                "Node Type": "BitmapOr",
+                "Plan Rows": 95000,
+                "Actual Rows": 95000,
+                "Total Cost": 8500.0,
+                "Actual Total Time": 600.0,
+                "Plans": [
+                    {
+                        "Node Type": "Bitmap Index Scan",
+                        "Index Name": "idx_transactions_merchant",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 30.0,
+                    },
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Filter": "(status = 'COMPLETED')",
+                        "Plan Rows": 90000,
+                        "Actual Rows": 90000,
+                        "Total Cost": 8300.0,
+                        "Actual Total Time": 570.0,
+                    },
+                ],
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 680.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=schema)
+    names = {m.skill_name for m in result.matches}
+    assert "bitmap_or_missing_index_branch" not in names, (
+        "index exists on 'status' — Seq Scan is a planner selectivity choice, "
+        f"not a missing-index gap; skill must not fire, got {names}"
+    )
+
+
+def test_no_false_positive_bitmap_or_no_schema_context():
+    """
+    BitmapOr → Seq Scan shape matches but schema_context is None — skill must
+    abstain (SCHEMA_UNAVAILABLE), not fire. Without schema we can't distinguish
+    a genuine missing-index gap from a valid selectivity-driven Seq Scan.
+    """
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": "transactions",
+            "Plan Rows": 15000,
+            "Actual Rows": 15000,
+            "Total Cost": 6000.0,
+            "Actual Total Time": 450.0,
+            "Plans": [{
+                "Node Type": "BitmapOr",
+                "Plan Rows": 15000,
+                "Actual Rows": 15000,
+                "Total Cost": 5000.0,
+                "Actual Total Time": 380.0,
+                "Plans": [
+                    {
+                        "Node Type": "Bitmap Index Scan",
+                        "Index Name": "idx_transactions_status",
+                        "Plan Rows": 10000,
+                        "Actual Rows": 10000,
+                        "Total Cost": 200.0,
+                        "Actual Total Time": 30.0,
+                    },
+                    {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "transactions",
+                        "Filter": "(txn_type = 'REFUND')",
+                        "Plan Rows": 5000,
+                        "Actual Rows": 5000,
+                        "Total Cost": 4800.0,
+                        "Actual Total Time": 350.0,
+                    },
+                ],
+            }],
+        },
+        "Planning Time": 0.4,
+        "Execution Time": 450.4,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, ledger_status=LedgerStatus.OK, schema_context=None)
+    names = {m.skill_name for m in result.matches}
+    assert "bitmap_or_missing_index_branch" not in names, (
+        f"skill must abstain when schema_context is None, got {names}"
     )
 
 

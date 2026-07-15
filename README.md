@@ -152,9 +152,9 @@ unique-dedup-without-index-awareness, initplan-cost-awareness,
 initplan-aggregate-cost-awareness, any-child-spill-awareness,
 bitmap-or-branch-awareness, and schema-verified-redundant-sort-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 143 tests:
+ledger, CLI wiring, 145 tests:
 
-- **86 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
+- **88 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
   were found and fixed during live testing.
 - **35 negative tests** — each proves a specific (skill, node type) pair

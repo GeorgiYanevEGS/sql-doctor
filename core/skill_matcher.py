@@ -449,6 +449,32 @@ def _evaluate_rules(
         if node.actual_total_time / execution_time_ms < rules["initplan_time_ratio_min"]:
             return False
 
+    # Seq Scan filter-column index check: fire only when the column referenced in
+    # the Seq Scan's filter_condition has NO index in schema_context. Suppresses the
+    # dominant false-positive class for bitmap_or_missing_index_branch: a Seq Scan
+    # inside a BitmapOr is often the planner's correct selectivity-driven choice when
+    # a high-fraction column (e.g. status = 'COMPLETED' matching 92% of rows) already
+    # has an index — adding another index wouldn't help. The bareword-pattern extraction
+    # is deliberately narrow (^\(?(\w+)\)? ... =) and fails open: on parse failure, the
+    # skill continues to fire rather than suppressing a potentially real gap.
+    if rules.get("seq_scan_filter_column_unindexed"):
+        if schema_context is None:
+            return False
+        filter_col: str | None = None
+        if node.filter_condition:
+            m = re.match(r'^\(?(\w+)\)?(?:::\w+)?\s*=', node.filter_condition.strip())
+            if m:
+                filter_col = m.group(1).lower()
+        if filter_col is not None:
+            table_schema = schema_context.get(node.relation_name or "")
+            if table_schema is not None:
+                has_index = any(
+                    filter_col in _parse_index_columns(idx.definition)
+                    for idx in table_schema.indexes
+                )
+                if has_index:
+                    return False
+
     # any_child: fires if at least one immediate child satisfies the nested rules dict.
     # Evaluates _evaluate_rules() independently against every child — an existential
     # quantifier across children, not first-match-and-inspect like child_node_type.

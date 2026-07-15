@@ -2,35 +2,25 @@ name: bitmap_or_missing_index_branch
 covers_node_types: ["BitmapOr"]
 detects:
   node_type: "BitmapOr"
+  requires_schema_context: true
   any_child:
     node_type: "Seq Scan"
+    seq_scan_filter_column_unindexed: true
 severity: high
 explanation: >
   A BitmapOr node is combining bitmap results from multiple OR-branches, but
-  at least one branch fell back to a full Seq Scan instead of a Bitmap Index
-  Scan. This means one of the OR-conditions has no supporting index: while
-  sibling branches resolved their predicate with an index, this branch scanned
-  the entire table to find matching rows. The Seq Scan inside a BitmapOr is
-  especially expensive because its result must be re-combined with the bitmap
-  from the index branches — and a single unindexed OR-branch forces a full
-  table scan that negates most of the benefit of the index on the other branches.
+  at least one branch fell back to a full Seq Scan on a column with no supporting
+  index. While sibling branches resolved their predicate with an index, this branch
+  scanned the entire table. A Seq Scan inside a BitmapOr is especially expensive
+  because its result must be re-combined with the index bitmaps from other branches,
+  and a single unindexed OR-branch negates most of the benefit of the indexed ones.
 fix_template: >
-  Identify the Seq Scan branch inside the BitmapOr (visible in EXPLAIN output
-  as a Seq Scan child with a Filter condition) and add an index on the column
-  referenced in that filter:
+  Identify the Seq Scan branch inside the BitmapOr (visible in EXPLAIN output as a
+  Seq Scan child with a Filter condition) and add an index on the column referenced
+  in that filter:
 
     -- If the Seq Scan filters on txn_type:
     CREATE INDEX CONCURRENTLY idx_{table}_txn_type ON {table} (txn_type);
 
-    -- If the Seq Scan filters on a status column:
-    CREATE INDEX CONCURRENTLY idx_{table}_status ON {table} (status);
-
-  After adding the index, re-run EXPLAIN (ANALYZE) and confirm the Seq Scan
-  child of BitmapOr is replaced by a Bitmap Index Scan. If all OR-branches
-  now use Bitmap Index Scan, the BitmapOr itself becomes a pure bitmap
-  operation and should run significantly faster.
-
-  Note: if the OR-branch's selectivity is very high (most rows match), the
-  planner may correctly prefer a Seq Scan even with an index available —
-  check pg_stats for the column's most_common_vals and their frequencies
-  before concluding the index would help.
+  After adding the index, re-run EXPLAIN (ANALYZE) and confirm the Seq Scan child
+  of BitmapOr is replaced by a Bitmap Index Scan.
