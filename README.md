@@ -160,7 +160,7 @@ modify-table-unindexed-scan-awareness, partition-pruning-failure-awareness,
 unique-sort-noop-awareness, cte-scan-single-reference-awareness, and
 window-agg-sort-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 181 tests:
+ledger, CLI wiring, 195 tests:
 
 - **111 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives

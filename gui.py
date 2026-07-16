@@ -323,6 +323,9 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
 
 
 def _results_view(page: ft.Page, state: AppState) -> ft.View:
+    from datetime import datetime
+    from report import generate_html_report
+
     result = state.last_result
 
     # --- Findings tab ---
@@ -341,6 +344,43 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
         ],
     )
 
+    export_status = ft.Text("", color=ft.colors.ON_SURFACE_VARIANT, size=12)
+
+    def _on_save_result(e: ft.FilePickerResultEvent) -> None:
+        if not e.path:
+            return  # user cancelled
+        try:
+            cfg = state.config
+            html = generate_html_report(
+                result,
+                query=state.last_query,
+                host=cfg.host,
+                dbname=cfg.dbname,
+            )
+            Path(e.path).write_text(html, encoding="utf-8")
+            export_status.value = f"Saved: {e.path}"
+            export_status.color = ft.colors.GREEN
+        except Exception as exc:
+            export_status.value = f"Export failed: {exc}"
+            export_status.color = ft.colors.RED
+        page.update()
+
+    file_picker = ft.FilePicker(on_result=_on_save_result)
+    page.overlay.append(file_picker)
+
+    default_name = (
+        "sql-doctor-report-"
+        + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        + ".html"
+    )
+
+    def on_export(_) -> None:
+        file_picker.save_file(
+            dialog_title="Save sql-doctor report",
+            file_name=default_name,
+            allowed_extensions=["html"],
+        )
+
     return ft.View(
         route="/results",
         controls=[
@@ -351,10 +391,19 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
                     ft.icons.ARROW_BACK, on_click=lambda _: page.go("/analyze")
                 ),
                 actions=[
+                    ft.TextButton(
+                        "Export Report",
+                        icon=ft.icons.DOWNLOAD,
+                        on_click=on_export,
+                    ),
                     ft.TextButton("New Analysis", on_click=lambda _: page.go("/analyze")),
                 ],
             ),
             ft.Container(expand=True, content=tabs),
+            ft.Container(
+                padding=ft.padding.symmetric(horizontal=16, vertical=4),
+                content=export_status,
+            ),
         ],
         expand=True,
     )
@@ -364,18 +413,18 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
 # Plan Tree tab — recursive, color-coded by skill match
 # ---------------------------------------------------------------------------
 
-def _render_plan_node(node, depth: int, flagged: set) -> ft.Control:
+def _render_plan_node(node, depth: int, flagged_ids: set) -> ft.Control:
     """
     Recursively render one PlanNode and its children as indented Flet controls.
 
     Red:   this node was flagged by at least one skill.
     White: clean node.
 
-    flagged is the set of matched_node references from DiagnosisResult.matches —
-    identity (is) comparison works because match_skills() stores the same PlanNode
-    objects that parse_explain_json() built; they are never copied.
+    flagged_ids is a set of id() values of matched PlanNode objects.
+    PlanNode is an unhashable mutable dataclass (eq=True, frozen=False), so
+    we track identity via id() rather than placing nodes directly in a set.
     """
-    is_flagged = node in flagged
+    is_flagged = id(node) in flagged_ids
 
     label_parts = [node.node_type]
     if node.relation_name:
@@ -403,7 +452,7 @@ def _render_plan_node(node, depth: int, flagged: set) -> ft.Control:
         ),
     )
 
-    child_controls = [_render_plan_node(child, depth + 1, flagged) for child in node.children]
+    child_controls = [_render_plan_node(child, depth + 1, flagged_ids) for child in node.children]
     return ft.Column(controls=[node_row, *child_controls], spacing=0)
 
 
@@ -411,23 +460,21 @@ def _build_plan_tree_tab(result) -> ft.Control:
     if result is None or result.plan is None:
         return ft.Text("No plan available.", color=ft.colors.ON_SURFACE_VARIANT)
 
-    flagged = {m.matched_node for m in result.matches if m.matched_node is not None}
+    flagged_ids = {id(m.matched_node) for m in result.matches if m.matched_node is not None}
 
-    legend = ft.Row(
-        spacing=16,
-        controls=[
-            ft.Row(spacing=4, controls=[
-                ft.Text("⚠", color=ft.colors.RED_400),
-                ft.Text("Skill flagged this node", size=12),
-            ]),
-            ft.Row(spacing=4, controls=[
-                ft.Text("·", color=ft.colors.ON_SURFACE),
-                ft.Text("Clean", size=12),
-            ]),
-        ],
-    )
+    legend_controls = []
+    if flagged_ids:
+        legend_controls.append(ft.Row(spacing=4, controls=[
+            ft.Text("⚠", color=ft.colors.RED_400),
+            ft.Text("Skill flagged this node", size=12),
+        ]))
+    legend_controls.append(ft.Row(spacing=4, controls=[
+        ft.Text("·", color=ft.colors.ON_SURFACE),
+        ft.Text("Clean", size=12),
+    ]))
+    legend = ft.Row(spacing=16, controls=legend_controls)
 
-    tree = _render_plan_node(result.plan.root, depth=0, flagged=flagged)
+    tree = _render_plan_node(result.plan.root, depth=0, flagged_ids=flagged_ids)
 
     return ft.Column(
         spacing=8,
