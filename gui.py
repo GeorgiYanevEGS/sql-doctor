@@ -737,23 +737,7 @@ def _build_llm_tab(result) -> ft.Control:
 # App entry point
 # ---------------------------------------------------------------------------
 
-def _dlog(msg: str) -> None:
-    """Append a diagnostic line to a debug log (stdout is invisible in a windowed app)."""
-    try:
-        with open(_CONFIG_DIR / "debug.log", "a", encoding="utf-8") as f:
-            f.write(msg + "\n")
-    except Exception:
-        pass
-
-
 async def main(page: ft.Page) -> None:
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        (_CONFIG_DIR / "debug.log").unlink()
-    except Exception:
-        pass
-    _dlog("main() started")
-
     page.title = "sql-doctor"
     page.theme_mode = ft.ThemeMode.SYSTEM
     page.window.width = 900
@@ -769,14 +753,10 @@ async def main(page: ft.Page) -> None:
     }
 
     def render_route(route: str) -> None:
-        _dlog(f"render_route: route={route!r}")
         builder = _VIEW_BUILDERS.get(route, _dashboard_view)
         try:
-            _dlog(f"building view via {builder.__name__}")
             view = builder(page, state)
-            _dlog("view built OK")
         except Exception:
-            _dlog("view builder RAISED:\n" + traceback.format_exc())
             traceback.print_exc()
             view = ft.View(
                 route=route,
@@ -784,9 +764,7 @@ async def main(page: ft.Page) -> None:
             )
         page.views.clear()
         page.views.append(view)
-        _dlog(f"view appended; page.views len={len(page.views)}")
         page.update()
-        _dlog("page.update() called")
 
     def route_change(e: ft.RouteChangeEvent) -> None:
         render_route(e.route)
@@ -803,9 +781,7 @@ async def main(page: ft.Page) -> None:
     # Render the initial route directly: page.route already defaults to "/",
     # so push_route("/") is a no-op that never fires on_route_change. Later
     # navigations push a *different* route and fire the handler normally.
-    _dlog(f"handlers registered; initial page.route={page.route!r}")
     render_route(page.route or "/")
-    _dlog("initial render_route() returned")
 
 
 if __name__ == "__main__":

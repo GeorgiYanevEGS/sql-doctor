@@ -137,8 +137,9 @@ def test_run_analysis_description_populated():
 # (previously only the CLI command did). Mock get_provider so no network/DB.
 # ---------------------------------------------------------------------------
 
-# A clean plan (indexed lookup returning 1 row) so no deterministic skill fires
-# and the LLM fallback path is exercised.
+# A fully-cleared plan: an indexed lookup whose "Index Scan" node type is
+# ledger-backed, so every node is SKILL_CLEARED (proven clean). The LLM fallback
+# must NOT fire here — we don't second-guess a ledger-backed clean result.
 _EXPLAIN_CLEAN = [
     {
         "Plan": {
@@ -155,6 +156,24 @@ _EXPLAIN_CLEAN = [
     }
 ]
 
+# A plan with genuine uncertainty: "Foreign Scan" is a real node type that no
+# skill has a ledger entry for, so it comes back UNVERIFIED (covered by the "*"
+# skill but not ledger-proven). This is the case the LLM fallback exists for.
+_EXPLAIN_UNVERIFIED = [
+    {
+        "Plan": {
+            "Node Type": "Foreign Scan",
+            "Relation Name": "remote_ledger",
+            "Plan Rows": 100,
+            "Actual Rows": 100,
+            "Total Cost": 200.0,
+            "Actual Total Time": 50.0,
+        },
+        "Planning Time": 0.2,
+        "Execution Time": 50.5,
+    }
+]
+
 
 def _patch_db(explain_json):
     """Context managers patching the DB seams for run_analysis."""
@@ -165,7 +184,7 @@ def _patch_db(explain_json):
     )
 
 
-def test_run_analysis_llm_fires_when_no_skill_matches():
+def test_run_analysis_llm_fires_on_unverified_node():
     from cli import run_analysis
     from core.llm_provider import LLMResponse
 
@@ -176,7 +195,7 @@ def test_run_analysis_llm_fires_when_no_skill_matches():
         provider="ollama",
         model="qwen2.5-coder:7b",
     )
-    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    db1, db2, db3 = _patch_db(_EXPLAIN_UNVERIFIED)
     with db1, db2, db3, patch("cli.get_provider", return_value=fake) as gp:
         result = run_analysis(
             dsn="postgresql://fake/db",
@@ -186,7 +205,7 @@ def test_run_analysis_llm_fires_when_no_skill_matches():
             llm_host="http://localhost:11434",
         )
 
-    assert not result.matches, "clean plan should produce no deterministic matches"
+    assert not result.matches, "unverified plan should produce no deterministic matches"
     assert result.llm.attempted is True
     assert result.llm.response is not None
     assert "index" in result.llm.response.text.lower()
@@ -196,6 +215,34 @@ def test_run_analysis_llm_fires_when_no_skill_matches():
     assert args[0] == "ollama"
     assert kwargs.get("model") == "qwen2.5-coder:7b"
     assert kwargs.get("host") == "http://localhost:11434"
+
+
+def test_run_analysis_llm_skipped_when_fully_skill_cleared():
+    """
+    A fully SKILL_CLEARED plan is a ledger-backed proven-clean result. Even with
+    a provider selected, the LLM fallback must NOT fire — we don't second-guess
+    a deterministically confirmed clean plan.
+    """
+    from cli import run_analysis
+
+    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    with db1, db2, db3, patch("cli.get_provider") as gp:
+        result = run_analysis(
+            dsn="postgresql://fake/db",
+            query="SELECT 1",
+            llm_provider="ollama",
+            llm_model="qwen2.5-coder:7b",
+        )
+
+    assert not result.matches
+    # Confirm the plan really is fully cleared (not just match-free).
+    from core.skill_matcher import CoverageStatus
+    assert all(
+        s == CoverageStatus.SKILL_CLEARED
+        for s in result.node_type_coverage.values()
+    ), f"fixture must be fully SKILL_CLEARED, got {result.node_type_coverage}"
+    assert result.llm.attempted is False
+    gp.assert_not_called()
 
 
 def test_run_analysis_llm_skipped_when_skill_matches():
@@ -234,7 +281,7 @@ def test_run_analysis_llm_unavailable_sets_error_without_raising():
 
     fake = MagicMock()
     fake.is_available.return_value = False
-    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    db1, db2, db3 = _patch_db(_EXPLAIN_UNVERIFIED)
     with db1, db2, db3, patch("cli.get_provider", return_value=fake):
         result = run_analysis(
             dsn="postgresql://fake/db",
@@ -255,7 +302,7 @@ def test_run_analysis_llm_call_failure_captured_as_error():
     fake = MagicMock()
     fake.is_available.return_value = True
     fake.complete.side_effect = LLMError("connection refused")
-    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    db1, db2, db3 = _patch_db(_EXPLAIN_UNVERIFIED)
     with db1, db2, db3, patch("cli.get_provider", return_value=fake):
         result = run_analysis(
             dsn="postgresql://fake/db",

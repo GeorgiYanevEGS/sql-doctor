@@ -215,11 +215,16 @@ def run_analysis(
         schema_context=schemas,
     )
 
-    # Schema-grounded LLM fallback: only when a provider is selected and no
-    # deterministic skill fired (matches the "skills first, LLM only if nothing
-    # matches" architecture). Failures are captured on the outcome, not raised.
+    # Schema-grounded LLM fallback: only when a provider is selected, no
+    # deterministic skill fired, AND the plan has genuine uncertainty — at least
+    # one NO_APPLICABLE_SKILL or UNVERIFIED node. A fully SKILL_CLEARED plan is a
+    # ledger-backed proven-clean result; we do not second-guess it with an LLM.
     llm = LLMOutcome()
-    if llm_provider != "none" and not diagnosis.matches:
+    has_uncertainty = any(
+        s in (CoverageStatus.NO_APPLICABLE_SKILL, CoverageStatus.UNVERIFIED)
+        for s in diagnosis.node_type_coverage.values()
+    )
+    if llm_provider != "none" and not diagnosis.matches and has_uncertainty:
         _status(f"\n--- Falling back to LLM ({llm_provider}), grounded in real schema ---")
         llm = _invoke_llm_fallback(
             llm_provider, llm_model, llm_host, quick, query, plan, schemas
