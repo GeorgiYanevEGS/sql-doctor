@@ -7,6 +7,8 @@ CLI tool that diagnoses slow PostgreSQL queries by combining:
    scan inside a loop), matched against the real
    `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` output.
    No LLM involved, zero hallucination risk, works offline.
+   See [SKILLS.md](SKILLS.md) for the full catalog of every skill, its
+   severity, and the node types it covers (auto-generated from the YAML).
 2. **Grounded LLM fallback** — only triggered if no skill matches. The
    real table schema (columns, indexes, row counts) is read from
    `information_schema` / `pg_catalog` and injected into the prompt, so
@@ -160,7 +162,7 @@ modify-table-unindexed-scan-awareness, partition-pruning-failure-awareness,
 unique-sort-noop-awareness, cte-scan-single-reference-awareness, and
 window-agg-sort-awareness),
 provider abstraction (3 backends), schema introspection, validator, coverage
-ledger, CLI wiring, 201 tests:
+ledger, CLI wiring, 202 tests:
 
 - **111 skill-matching tests** — synthetic EXPLAIN JSON, no DB required.
   Of these, 6 are regression tests written after real false positives
