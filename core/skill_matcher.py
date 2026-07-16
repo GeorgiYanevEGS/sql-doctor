@@ -77,6 +77,7 @@ class DiagnosisResult:
 class SkillMatch:
     skill_name: str
     severity: str
+    description: str
     explanation: str
     fix_template: str
     matched_node: PlanNode | None
@@ -691,6 +692,7 @@ def match_skills(
                 SkillMatch(
                     skill_name=skill.name,
                     severity=skill.severity,
+                    description=skill.description,
                     explanation=skill.explanation,
                     fix_template=skill.fix_text(None),
                     matched_node=None,
@@ -708,6 +710,7 @@ def match_skills(
                     SkillMatch(
                         skill_name=skill.name,
                         severity=skill.severity,
+                        description=skill.description,
                         explanation=skill.explanation,
                         fix_template=skill.fix_text(node),
                         matched_node=node,

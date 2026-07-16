@@ -40,6 +40,30 @@ def test_missing_index():
     print("PASS: test_missing_index ->", [m.skill_name for m in result.matches])
 
 
+def test_skill_match_carries_description():
+    explain_json = [{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Relation Name": "transactions",
+            "Filter": "(account_id = 42)",
+            "Plan Rows": 1,
+            "Actual Rows": 15000,
+            "Total Cost": 45000.0,
+            "Actual Total Time": 320.5,
+        },
+        "Planning Time": 0.3,
+        "Execution Time": 321.0,
+    }]
+    plan = parse_explain_json(explain_json)
+    result = match_skills(plan, SKILLS, table_row_counts={"transactions": 500000}, ledger_status=LedgerStatus.OK)
+    match = next(m for m in result.matches if m.skill_name == "missing_index")
+    skill = next(s for s in SKILLS if s.name == "missing_index")
+    assert match.description == skill.description, (
+        f"SkillMatch.description should equal Skill.description, got {match.description!r}"
+    )
+    assert match.description.strip(), "SkillMatch.description must not be empty"
+
+
 def test_implicit_conversion():
     explain_json = [
         {
