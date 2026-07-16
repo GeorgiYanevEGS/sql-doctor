@@ -220,12 +220,34 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
         value=state.last_query,
         expand=True,
         hint_text="SELECT * FROM transactions WHERE account_id = 42",
-        font_family="monospace",
+        text_style=ft.TextStyle(font_family="monospace"),
     )
+    # Model name + host for Ollama. Only shown when "Ollama (local)" is selected;
+    # OllamaProvider defaults to "sqlcoder" (rarely pulled) and localhost:11434.
+    model_field = ft.TextField(
+        label="Ollama model",
+        value="qwen2.5-coder:7b",
+        width=220,
+        visible=False,
+    )
+    host_field = ft.TextField(
+        label="Ollama host",
+        value="http://localhost:11434",
+        width=240,
+        visible=False,
+    )
+
+    def on_provider_change(_) -> None:
+        is_ollama = llm_dropdown.value == "ollama"
+        model_field.visible = is_ollama
+        host_field.visible = is_ollama
+        page.update()
+
     llm_dropdown = ft.Dropdown(
         label="LLM fallback",
         width=200,
         value="none",
+        on_select=on_provider_change,
         options=[
             ft.dropdown.Option("none", "None (deterministic only)"),
             ft.dropdown.Option("ollama", "Ollama (local)"),
@@ -264,10 +286,25 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
                     f"postgresql://{cfg.user}:{state.password}"
                     f"@{cfg.host}:{cfg.port}/{cfg.dbname}"
                 )
+                # Only pass model/host for Ollama; other providers have their own
+                # defaults and these fields are hidden/irrelevant for them.
+                is_ollama = llm_dropdown.value == "ollama"
+                llm_model = (
+                    model_field.value.strip()
+                    if is_ollama and model_field.value.strip()
+                    else None
+                )
+                llm_host = (
+                    host_field.value.strip()
+                    if is_ollama and host_field.value.strip()
+                    else None
+                )
                 result = run_analysis(
                     dsn=dsn,
                     query=state.last_query,
                     llm_provider=llm_dropdown.value or "none",
+                    llm_model=llm_model,
+                    llm_host=llm_host,
                     schema=cfg.schema,
                     on_status=_on_status,
                 )
@@ -276,7 +313,11 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
                 spinner.visible = False
                 status_text.value = f"Done — {len(result.matches)} finding(s)."
                 page.update()
-                page.navigate("/results")
+                # Navigation must run on the page's event loop. This code is on a
+                # background thread (no running loop), so navigate()/create_task()
+                # would raise "no running event loop". run_task() marshals the
+                # push_route coroutine onto the loop thread-safely.
+                page.run_task(page.push_route, "/results")
             except Exception as exc:
                 analyze_btn.disabled = False
                 spinner.visible = False
@@ -307,6 +348,8 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
                             spacing=12,
                             controls=[
                                 llm_dropdown,
+                                model_field,
+                                host_field,
                                 analyze_btn,
                                 spinner,
                                 status_text,
@@ -331,20 +374,44 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
     # --- Plan Tree tab ---
     plan_tree_content = _build_plan_tree_tab(result) if result else ft.Text("No results yet.")
 
+    # --- LLM Hypothesis tab ---
+    llm_content = _build_llm_tab(result) if result else ft.Text("No results yet.")
+
+    # Flet 0.86 Tabs model: Tabs(length=, content=Column([TabBar, TabBarView])).
+    # Tab is header-only (label/icon); tab bodies live in a parallel TabBarView
+    # whose controls are matched to the TabBar tabs by index order.
     tabs = ft.Tabs(
-        selected_index=0,
-        animation_duration=200,
+        length=3,
         expand=True,
-        tabs=[
-            ft.Tab(text="Findings", content=ft.Container(padding=16, content=findings_content)),
-            ft.Tab(text="Plan Tree", content=ft.Container(padding=16, content=plan_tree_content)),
-        ],
+        content=ft.Column(
+            expand=True,
+            controls=[
+                ft.TabBar(
+                    tabs=[
+                        ft.Tab(label="Findings"),
+                        ft.Tab(label="Plan Tree"),
+                        ft.Tab(label="LLM Hypothesis", icon=ft.Icons.AUTO_AWESOME),
+                    ],
+                ),
+                ft.TabBarView(
+                    expand=True,
+                    controls=[
+                        ft.Container(padding=16, content=findings_content),
+                        ft.Container(padding=16, content=plan_tree_content),
+                        ft.Container(padding=16, content=llm_content),
+                    ],
+                ),
+            ],
+        ),
     )
 
     export_status = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT, size=12)
 
+    # FilePicker is a Service in Flet 0.86 (not a visual Control), so it must be
+    # registered in page.services — not page.overlay, which renders its members
+    # as controls and raises "Unknown control: FilePicker".
     file_picker = ft.FilePicker()
-    page.overlay.append(file_picker)
+    page.services.append(file_picker)
 
     default_name = (
         "sql-doctor-report-"
@@ -396,7 +463,7 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
             ),
             ft.Container(expand=True, content=tabs),
             ft.Container(
-                padding=ft.padding.symmetric(horizontal=16, vertical=4),
+                padding=ft.Padding.symmetric(horizontal=16, vertical=4),
                 content=export_status,
             ),
         ],
@@ -436,7 +503,7 @@ def _render_plan_node(node, depth: int, flagged_ids: set) -> ft.Control:
     prefix = "⚠ " if is_flagged else "· "
 
     node_row = ft.Container(
-        padding=ft.padding.only(left=depth * 20, top=2, bottom=2),
+        padding=ft.Padding.only(left=depth * 20, top=2, bottom=2),
         content=ft.Text(
             prefix + label,
             color=text_color,
@@ -517,7 +584,7 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
                 ft.Container(
                     content=ft.Text(match.severity.upper(), size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                     bgcolor=_SEVERITY_COLOR.get(match.severity, ft.Colors.GREY),
-                    padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=2),
                     border_radius=4,
                 ),
                 ft.Text(match.skill_name, size=16, weight=ft.FontWeight.BOLD),
@@ -548,7 +615,7 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
                     color=ft.Colors.WHITE,
                 ),
                 bgcolor=sev_color,
-                padding=ft.padding.symmetric(horizontal=6, vertical=2),
+                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                 border_radius=4,
             ),
             title=ft.Text(match.skill_name, weight=ft.FontWeight.W_500),
@@ -576,10 +643,117 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
 
 
 # ---------------------------------------------------------------------------
+# LLM Hypothesis tab — shows the grounded LLM fallback outcome, if any
+# ---------------------------------------------------------------------------
+
+def _build_llm_tab(result) -> ft.Control:
+    llm = getattr(result, "llm", None)
+
+    # The fallback only runs when a provider is selected AND no skill matched.
+    if llm is None or not getattr(llm, "attempted", False):
+        return ft.Column(
+            spacing=8,
+            controls=[
+                ft.Text(
+                    "No LLM hypothesis.",
+                    size=16,
+                    weight=ft.FontWeight.BOLD,
+                ),
+                ft.Text(
+                    "The LLM fallback runs only when a provider is selected and no "
+                    "deterministic skill matched. Either a skill covered this query, "
+                    "or the LLM fallback was set to None.",
+                    color=ft.Colors.ON_SURFACE_VARIANT,
+                ),
+            ],
+        )
+
+    if llm.error:
+        return ft.Column(
+            spacing=8,
+            controls=[
+                ft.Row(spacing=8, controls=[
+                    ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_400),
+                    ft.Text("LLM fallback failed", weight=ft.FontWeight.BOLD, size=16),
+                ]),
+                ft.Text(llm.error, color=ft.Colors.RED_400, selectable=True),
+            ],
+        )
+
+    resp = llm.response
+    if resp is None or not resp.text.strip():
+        return ft.Text(
+            "The provider returned no hypothesis text.",
+            color=ft.Colors.ON_SURFACE_VARIANT,
+        )
+
+    controls = [
+        ft.Row(spacing=8, controls=[
+            ft.Icon(ft.Icons.AUTO_AWESOME, color=ft.Colors.BLUE_400),
+            ft.Text(
+                f"Hypothesis ({resp.provider}/{resp.model})",
+                weight=ft.FontWeight.BOLD,
+                size=16,
+            ),
+        ]),
+        ft.Text(
+            "Grounded in the real schema, but treat as a hypothesis to verify — "
+            "not a confirmed diagnosis.",
+            size=12,
+            color=ft.Colors.ON_SURFACE_VARIANT,
+        ),
+        ft.Divider(),
+        ft.Text(resp.text.strip(), selectable=True),
+        ft.Divider(),
+    ]
+
+    # Post-LLM identifier grounding check.
+    v = llm.validation
+    if v is not None and not v.ok:
+        controls.append(ft.Row(spacing=8, controls=[
+            ft.Icon(ft.Icons.WARNING_AMBER, color=ft.Colors.ORANGE_400),
+            ft.Text(
+                "Validation warning: mentions names not found in the real schema: "
+                + ", ".join(v.unknown_tokens)
+                + ". Treat this suggestion as unverified — do not apply blindly.",
+                color=ft.Colors.ORANGE_400,
+                selectable=True,
+                expand=True,
+            ),
+        ]))
+    elif v is not None:
+        controls.append(ft.Row(spacing=8, controls=[
+            ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=ft.Colors.GREEN),
+            ft.Text(
+                f"All {v.checked_tokens} referenced identifiers matched the real schema.",
+                color=ft.Colors.GREEN,
+            ),
+        ]))
+
+    return ft.Column(spacing=8, controls=controls, scroll=ft.ScrollMode.AUTO, expand=True)
+
+
+# ---------------------------------------------------------------------------
 # App entry point
 # ---------------------------------------------------------------------------
 
-def main(page: ft.Page) -> None:
+def _dlog(msg: str) -> None:
+    """Append a diagnostic line to a debug log (stdout is invisible in a windowed app)."""
+    try:
+        with open(_CONFIG_DIR / "debug.log", "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
+
+async def main(page: ft.Page) -> None:
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        (_CONFIG_DIR / "debug.log").unlink()
+    except Exception:
+        pass
+    _dlog("main() started")
+
     page.title = "sql-doctor"
     page.theme_mode = ft.ThemeMode.SYSTEM
     page.window.width = 900
@@ -594,12 +768,15 @@ def main(page: ft.Page) -> None:
         "/results": _results_view,
     }
 
-    def route_change(e: ft.RouteChangeEvent) -> None:
-        route = e.route
+    def render_route(route: str) -> None:
+        _dlog(f"render_route: route={route!r}")
         builder = _VIEW_BUILDERS.get(route, _dashboard_view)
         try:
+            _dlog(f"building view via {builder.__name__}")
             view = builder(page, state)
+            _dlog("view built OK")
         except Exception:
+            _dlog("view builder RAISED:\n" + traceback.format_exc())
             traceback.print_exc()
             view = ft.View(
                 route=route,
@@ -607,17 +784,28 @@ def main(page: ft.Page) -> None:
             )
         page.views.clear()
         page.views.append(view)
+        _dlog(f"view appended; page.views len={len(page.views)}")
         page.update()
+        _dlog("page.update() called")
 
-    def view_pop(_) -> None:
-        page.views.pop()
+    def route_change(e: ft.RouteChangeEvent) -> None:
+        render_route(e.route)
+
+    async def view_pop(e) -> None:
+        if e.view is not None:
+            page.views.remove(e.view)
         top = page.views[-1] if page.views else None
         if top:
-            page.navigate(top.route)
+            await page.push_route(top.route)
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
-    page.navigate("/")
+    # Render the initial route directly: page.route already defaults to "/",
+    # so push_route("/") is a no-op that never fires on_route_change. Later
+    # navigations push a *different* route and fire the handler normally.
+    _dlog(f"handlers registered; initial page.route={page.route!r}")
+    render_route(page.route or "/")
+    _dlog("initial render_route() returned")
 
 
 if __name__ == "__main__":

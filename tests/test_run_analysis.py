@@ -133,6 +133,142 @@ def test_run_analysis_description_populated():
 
 
 # ---------------------------------------------------------------------------
+# LLM fallback wiring — run_analysis now invokes the grounded LLM path itself
+# (previously only the CLI command did). Mock get_provider so no network/DB.
+# ---------------------------------------------------------------------------
+
+# A clean plan (indexed lookup returning 1 row) so no deterministic skill fires
+# and the LLM fallback path is exercised.
+_EXPLAIN_CLEAN = [
+    {
+        "Plan": {
+            "Node Type": "Index Scan",
+            "Relation Name": "transactions",
+            "Index Name": "idx_transactions_account_id",
+            "Plan Rows": 1,
+            "Actual Rows": 1,
+            "Total Cost": 4.0,
+            "Actual Total Time": 0.05,
+        },
+        "Planning Time": 0.1,
+        "Execution Time": 0.1,
+    }
+]
+
+
+def _patch_db(explain_json):
+    """Context managers patching the DB seams for run_analysis."""
+    return (
+        patch("cli._get_connection", return_value=_make_mock_conn(explain_json)),
+        patch("cli.get_table_row_counts", return_value={"transactions": 500000}),
+        patch("cli.introspect_query_tables", return_value={}),
+    )
+
+
+def test_run_analysis_llm_fires_when_no_skill_matches():
+    from cli import run_analysis
+    from core.llm_provider import LLMResponse
+
+    fake = MagicMock()
+    fake.is_available.return_value = True
+    fake.complete.return_value = LLMResponse(
+        text="Consider adding an index on account_id.",
+        provider="ollama",
+        model="qwen2.5-coder:7b",
+    )
+    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    with db1, db2, db3, patch("cli.get_provider", return_value=fake) as gp:
+        result = run_analysis(
+            dsn="postgresql://fake/db",
+            query="SELECT 1",
+            llm_provider="ollama",
+            llm_model="qwen2.5-coder:7b",
+            llm_host="http://localhost:11434",
+        )
+
+    assert not result.matches, "clean plan should produce no deterministic matches"
+    assert result.llm.attempted is True
+    assert result.llm.response is not None
+    assert "index" in result.llm.response.text.lower()
+    # model + host must be threaded into the provider constructor.
+    gp.assert_called_once()
+    args, kwargs = gp.call_args
+    assert args[0] == "ollama"
+    assert kwargs.get("model") == "qwen2.5-coder:7b"
+    assert kwargs.get("host") == "http://localhost:11434"
+
+
+def test_run_analysis_llm_skipped_when_skill_matches():
+    from cli import run_analysis
+
+    db1, db2, db3 = _patch_db(_EXPLAIN_JSON)  # missing_index fires on this plan
+    with db1, db2, db3, patch("cli.get_provider") as gp:
+        result = run_analysis(
+            dsn="postgresql://fake/db",
+            query="SELECT 1",
+            llm_provider="ollama",
+        )
+
+    assert result.matches, "missing_index should have fired"
+    assert result.llm.attempted is False
+    gp.assert_not_called()
+
+
+def test_run_analysis_llm_provider_none_never_attempts():
+    from cli import run_analysis
+
+    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    with db1, db2, db3, patch("cli.get_provider") as gp:
+        result = run_analysis(
+            dsn="postgresql://fake/db",
+            query="SELECT 1",
+            llm_provider="none",
+        )
+
+    assert result.llm.attempted is False
+    gp.assert_not_called()
+
+
+def test_run_analysis_llm_unavailable_sets_error_without_raising():
+    from cli import run_analysis
+
+    fake = MagicMock()
+    fake.is_available.return_value = False
+    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    with db1, db2, db3, patch("cli.get_provider", return_value=fake):
+        result = run_analysis(
+            dsn="postgresql://fake/db",
+            query="SELECT 1",
+            llm_provider="ollama",
+        )
+
+    assert result.llm.attempted is True
+    assert result.llm.error is not None
+    assert result.llm.response is None
+    fake.complete.assert_not_called()  # unavailable → never calls the model
+
+
+def test_run_analysis_llm_call_failure_captured_as_error():
+    from cli import run_analysis
+    from core.llm_provider import LLMError
+
+    fake = MagicMock()
+    fake.is_available.return_value = True
+    fake.complete.side_effect = LLMError("connection refused")
+    db1, db2, db3 = _patch_db(_EXPLAIN_CLEAN)
+    with db1, db2, db3, patch("cli.get_provider", return_value=fake):
+        result = run_analysis(
+            dsn="postgresql://fake/db",
+            query="SELECT 1",
+            llm_provider="ollama",
+        )
+
+    assert result.llm.attempted is True
+    assert result.llm.error is not None
+    assert "connection refused" in result.llm.error
+
+
+# ---------------------------------------------------------------------------
 # CLI smoke test — verify analyze command still works via subprocess
 # ---------------------------------------------------------------------------
 

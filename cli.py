@@ -19,7 +19,7 @@ from typing import Callable
 import typer
 
 from core.explain_parser import ParsedPlan, parse_explain_json
-from core.llm_provider import LLMError, get_provider
+from core.llm_provider import LLMError, LLMResponse, get_provider
 from core.schema_introspect import get_table_row_counts, introspect_query_tables
 from core.skill_matcher import (
     CoverageStatus,
@@ -30,21 +30,46 @@ from core.skill_matcher import (
     load_skills,
     match_skills,
 )
-from core.validator import build_grounded_prompt, validate_llm_suggestion
+from core.validator import ValidationResult, build_grounded_prompt, validate_llm_suggestion
 
 app = typer.Typer(add_completion=False)
+
+
+@dataclass
+class LLMOutcome:
+    """
+    Result of the optional schema-grounded LLM fallback. Populated by
+    run_analysis() only when a provider is selected and no deterministic
+    skill matched. All fields default to empty so the common (no-LLM) path
+    leaves it inert.
+
+    response   : the raw LLM completion (text/provider/model), or None.
+    validation : identifier-grounding check of response.text, or None when
+                 there was no text to validate (e.g. manual --quick mode).
+    error      : human-readable failure reason (unknown/unavailable provider
+                 or a failed call), or None on success. Callers decide how to
+                 surface it (CLI exits non-zero; GUI shows a red panel).
+    attempted  : True if the fallback path ran at all (provider selected and
+                 no skill matched), regardless of success.
+    """
+    response: LLMResponse | None = None
+    validation: ValidationResult | None = None
+    error: str | None = None
+    attempted: bool = False
 
 
 @dataclass
 class AnalysisResult:
     """
     Return type of run_analysis(). Bundles everything the caller needs:
-    the deterministic diagnosis, the parsed plan (for tree rendering), and
-    the schema context (for LLM prompt building or display).
+    the deterministic diagnosis, the parsed plan (for tree rendering), the
+    schema context (for LLM prompt building or display), and the optional
+    LLM fallback outcome.
     """
     diagnosis: DiagnosisResult
     plan: ParsedPlan
     schemas: dict
+    llm: LLMOutcome = field(default_factory=LLMOutcome)
 
     # Mirror DiagnosisResult's interface so callers can use result.matches,
     # result.node_type_coverage, etc. without unpacking.
@@ -70,11 +95,79 @@ def _get_connection(dsn: str):
     return psycopg2.connect(dsn)
 
 
+def _build_provider_kwargs(
+    llm_provider: str, llm_model: str | None, llm_host: str | None, quick: bool
+) -> dict:
+    """
+    Map the flat CLI/GUI options onto each provider's constructor kwargs.
+
+    - azure-openai: a model name means the deployment name.
+    - manual: forwards the --quick flag.
+    - ollama/claude: a model name means the model; ollama also accepts a host.
+    Any option left unset falls back to the provider's own default (env vars).
+    """
+    if llm_provider == "azure-openai" and llm_model:
+        return {"deployment": llm_model}
+    if llm_provider == "manual":
+        return {"quick": quick}
+    kwargs: dict = {}
+    if llm_model:
+        kwargs["model"] = llm_model
+    if llm_provider == "ollama" and llm_host:
+        kwargs["host"] = llm_host
+    return kwargs
+
+
+def _invoke_llm_fallback(
+    llm_provider: str,
+    llm_model: str | None,
+    llm_host: str | None,
+    quick: bool,
+    query: str,
+    plan: ParsedPlan,
+    schemas: dict,
+) -> LLMOutcome:
+    """
+    Run the schema-grounded LLM fallback and return an LLMOutcome.
+
+    Never raises for expected failure modes (unknown/unavailable provider, a
+    failed call) — those are captured in outcome.error so both the CLI and the
+    GUI can decide how to surface them. Shared single source of truth for the
+    provider call + post-LLM validation.
+    """
+    prompt = build_grounded_prompt(query, plan.summary(), schemas)
+    try:
+        provider = get_provider(
+            llm_provider, **_build_provider_kwargs(llm_provider, llm_model, llm_host, quick)
+        )
+    except ValueError as exc:
+        return LLMOutcome(error=str(exc), attempted=True)
+
+    if not provider.is_available():
+        return LLMOutcome(
+            error=(
+                f"Provider '{llm_provider}' is not available/configured "
+                "(check credentials or that the local server is running)."
+            ),
+            attempted=True,
+        )
+
+    try:
+        response = provider.complete(prompt)
+    except LLMError as exc:
+        return LLMOutcome(error=f"LLM call failed: {exc}", attempted=True)
+
+    # Empty text (e.g. manual --quick) has nothing to validate.
+    validation = validate_llm_suggestion(response.text, schemas) if response.text else None
+    return LLMOutcome(response=response, validation=validation, attempted=True)
+
+
 def run_analysis(
     dsn: str,
     query: str,
     llm_provider: str = "none",
     llm_model: str | None = None,
+    llm_host: str | None = None,
     schema: str = "public",
     quick: bool = False,
     on_status: Callable[[str], None] | None = None,
@@ -122,7 +215,17 @@ def run_analysis(
         schema_context=schemas,
     )
 
-    return AnalysisResult(diagnosis=diagnosis, plan=plan, schemas=schemas)
+    # Schema-grounded LLM fallback: only when a provider is selected and no
+    # deterministic skill fired (matches the "skills first, LLM only if nothing
+    # matches" architecture). Failures are captured on the outcome, not raised.
+    llm = LLMOutcome()
+    if llm_provider != "none" and not diagnosis.matches:
+        _status(f"\n--- Falling back to LLM ({llm_provider}), grounded in real schema ---")
+        llm = _invoke_llm_fallback(
+            llm_provider, llm_model, llm_host, quick, query, plan, schemas
+        )
+
+    return AnalysisResult(diagnosis=diagnosis, plan=plan, schemas=schemas, llm=llm)
 
 
 @app.command()
@@ -137,6 +240,11 @@ def analyze(
         None,
         help="Model name for the chosen provider (e.g. 'gemma3:3b' for ollama). "
         "Uses each provider's built-in default if not set.",
+    ),
+    llm_host: str = typer.Option(
+        None,
+        help="Ollama host URL (e.g. 'http://localhost:11434'). Only used with "
+        "--llm-provider ollama. Defaults to $OLLAMA_HOST or http://localhost:11434.",
     ),
     schema: str = typer.Option("public", help="Postgres schema name"),
     quick: bool = typer.Option(
@@ -158,6 +266,7 @@ def analyze(
         query=query,
         llm_provider=llm_provider,
         llm_model=llm_model,
+        llm_host=llm_host,
         schema=schema,
         quick=quick,
         on_status=_echo,
@@ -202,59 +311,36 @@ def analyze(
         )
         return
 
-    typer.echo(f"\n--- Falling back to LLM ({llm_provider}), grounded in real schema ---")
+    # The LLM fallback already ran inside run_analysis() (it emitted the
+    # "Falling back to LLM" status via on_status above). Print its outcome.
+    llm = result.llm
 
-    prompt = build_grounded_prompt(query, result.plan.summary(), result.schemas)
-
-    try:
-        if llm_provider == "azure-openai" and llm_model:
-            provider_kwargs = {"deployment": llm_model}
-        elif llm_provider == "manual":
-            provider_kwargs = {"quick": quick}
-        elif llm_model:
-            provider_kwargs = {"model": llm_model}
-        else:
-            provider_kwargs = {}
-        provider = get_provider(llm_provider, **provider_kwargs)
-    except ValueError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED)
+    if llm.error:
+        typer.secho(llm.error, fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    if not provider.is_available():
-        typer.secho(
-            f"Provider '{llm_provider}' is not available/configured "
-            "(check credentials or that the local server is running).",
-            fg=typer.colors.RED,
-        )
-        raise typer.Exit(1)
-
-    try:
-        response = provider.complete(prompt)
-    except LLMError as exc:
-        typer.secho(f"LLM call failed: {exc}", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    if not response.text:
-        # --quick mode: nothing was returned to validate, the prompt was
-        # already printed above. Nothing more to do.
+    if llm.response is None or not llm.response.text:
+        # manual --quick: the prompt was printed, nothing returned to validate.
         return
 
-    validation = validate_llm_suggestion(response.text, result.schemas)
+    typer.echo(
+        f"\n--- LLM hypothesis ({llm.response.provider}/{llm.response.model}) ---"
+    )
+    typer.echo(llm.response.text.strip())
 
-    typer.echo(f"\n--- LLM hypothesis ({response.provider}/{response.model}) ---")
-    typer.echo(response.text.strip())
-
-    if not validation.ok:
+    if llm.validation is None:
+        return
+    if not llm.validation.ok:
         typer.secho(
             f"\n⚠ VALIDATION WARNING: mentions names not found in the real "
-            f"schema: {', '.join(validation.unknown_tokens)}. "
+            f"schema: {', '.join(llm.validation.unknown_tokens)}. "
             "Treat this suggestion as unverified — do not apply blindly.",
             fg=typer.colors.RED,
             bold=True,
         )
     else:
         typer.secho(
-            f"\n✓ All {validation.checked_tokens} referenced identifiers matched "
+            f"\n✓ All {llm.validation.checked_tokens} referenced identifiers matched "
             "the real schema.",
             fg=typer.colors.GREEN,
         )
