@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
+
+from core.skill_matcher import default_external_skills_dir, ensure_external_skills_dir
 
 import flet as ft
 
@@ -73,10 +76,36 @@ class AppState:
 # Screen builders
 # ---------------------------------------------------------------------------
 
+def _open_in_file_manager(path: Path) -> None:
+    """Open a folder in the OS file manager (best effort, cross-platform)."""
+    if sys.platform == "win32":
+        os.startfile(str(path))  # noqa: S606 — opening a folder we created
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
+
+
 def _dashboard_view(page: ft.Page, state: AppState) -> ft.View:
     status_color = ft.Colors.GREEN if state.connection_ok else ft.Colors.GREY_400
     status_label = "Connected" if state.connection_ok else "Not connected"
     status_icon = ft.Icons.CIRCLE if state.connection_ok else ft.Icons.RADIO_BUTTON_UNCHECKED
+
+    skills_hint = ft.Text("", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+
+    def on_open_skills_folder(_) -> None:
+        # Create the folder (+ starter README) on first use, then reveal it so a
+        # non-technical colleague can drop in extra skill YAMLs without knowing
+        # the path. New skills are picked up on the next analysis.
+        try:
+            folder = ensure_external_skills_dir()
+            _open_in_file_manager(folder)
+            skills_hint.value = f"Add *.yaml skills to: {folder}"
+            skills_hint.color = ft.Colors.ON_SURFACE_VARIANT
+        except Exception as exc:  # noqa: BLE001
+            skills_hint.value = f"Could not open skills folder: {exc}"
+            skills_hint.color = ft.Colors.RED
+        page.update()
 
     return ft.View(
         route="/",
@@ -113,8 +142,14 @@ def _dashboard_view(page: ft.Page, state: AppState) -> ft.View:
                                     icon=ft.Icons.SETTINGS,
                                     on_click=lambda _: page.navigate("/connect"),
                                 ),
+                                ft.OutlinedButton(
+                                    "Open skills folder",
+                                    icon=ft.Icons.FOLDER_OPEN,
+                                    on_click=on_open_skills_folder,
+                                ),
                             ],
                         ),
+                        skills_hint,
                     ],
                 ),
             ),
@@ -308,6 +343,8 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
                     llm_host=llm_host,
                     schema=cfg.schema,
                     on_status=_on_status,
+                    # Merge any user-added skills from the external folder.
+                    external_skills_dir=default_external_skills_dir(),
                 )
                 state.last_result = result
                 analyze_btn.disabled = False

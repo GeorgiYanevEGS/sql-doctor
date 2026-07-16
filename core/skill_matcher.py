@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -60,6 +61,77 @@ class LedgerStatus(Enum):
 class LoadedSkills:
     skills: list["Skill"]
     ledger_status: LedgerStatus
+
+
+class DuplicateSkillNameError(ValueError):
+    """
+    Raised when two skills share a name during load — typically an external
+    override YAML reusing a bundled skill's name.
+
+    Rejected rather than silently overridden: an override that kept a bundled
+    name would inherit that name's coverage-ledger entries and could be falsely
+    reported as SKILL_CLEARED against negative tests written for the original,
+    different logic. Skill names are a unique namespace.
+    """
+
+
+# Starter README dropped into the external skills folder so a colleague who only
+# has the packaged .exe knows what the folder is for and how to write a skill.
+_EXTERNAL_SKILLS_README = """# sql-doctor — external skills folder
+
+Drop additional skill definitions here as `*.yaml` files. sql-doctor loads every
+`.yaml` in this folder *in addition to* the skills built into the app, so you can
+add new checks without rebuilding or reinstalling anything.
+
+## Rules
+- One skill per file. The `name:` must be UNIQUE. A name that collides with a
+  built-in skill is rejected with a clear error — rename it.
+- A skill added here has no coverage-ledger entry, so any node type it covers is
+  reported as UNVERIFIED, never as a proven-clean SKILL_CLEARED. It can still
+  flag problems (positive matches) exactly like a built-in skill.
+
+## Minimal YAML example
+
+    name: seq_scan_leading_wildcard
+    covers_node_types: ["Seq Scan"]
+    severity: medium
+    description: Short one-line summary shown in the findings list.
+    detects:
+      node_type: "Seq Scan"
+      condition_pattern: "~~ '%"
+    explanation: >
+      Longer explanation shown in the finding's detail panel.
+    fix_template: >
+      Suggested fix text.
+
+## Full reference
+Predicate list and the pre-implementation checklist for new skills:
+https://github.com/GeorgiYanevEGS/sql-doctor/blob/main/CONTRIBUTING.md
+"""
+
+
+def default_external_skills_dir() -> Path:
+    """
+    User-writable folder for additional skill YAMLs: %APPDATA%\\sql-doctor\\skills
+    (falls back to ~/sql-doctor/skills when APPDATA is unset). Independent of
+    whether sql-doctor runs from source or a frozen binary — it is a per-user
+    override location, mirroring where the GUI stores its config.
+    """
+    base = Path(os.environ.get("APPDATA", Path.home())) / "sql-doctor"
+    return base / "skills"
+
+
+def ensure_external_skills_dir() -> Path:
+    """
+    Create the external skills folder (and a starter README) if missing; return
+    its path. Idempotent — never overwrites a README the user has edited.
+    """
+    d = default_external_skills_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    readme = d / "README.md"
+    if not readme.exists():
+        readme.write_text(_EXTERNAL_SKILLS_README, encoding="utf-8")
+    return d
 
 
 @dataclass
@@ -613,14 +685,49 @@ def _evaluate_rules(
 def load_skills(
     skills_dir: Path | str = DEFAULT_SKILLS_DIR,
     ledger_path: Path | None = None,
+    external_skills_dir: Path | str | None = None,
 ) -> LoadedSkills:
-    skills_dir = Path(skills_dir)
-    skills = []
-    for path in sorted(skills_dir.glob("*.yaml")):
-        try:
-            skills.append(Skill.from_yaml_file(path))
-        except Exception as exc:  # noqa: BLE001
-            print(f"[sql-doctor] Warning: failed to load skill {path.name}: {exc}")
+    """
+    Load the bundled skill library, optionally merging a user-writable external
+    folder of extra skills.
+
+    external_skills_dir is OPT-IN: only runtime callers (the CLI/GUI analysis
+    paths and list-skills) pass it. Tests and generate_skills_doc.py leave it
+    None so they only ever see the bundled library and stay reproducible.
+
+    Skill names are a unique namespace across bundled + external — a collision
+    raises DuplicateSkillNameError rather than silently overriding (see that
+    exception's docstring for the ledger-integrity reason). Externally-added
+    skills have no ledger entry and are therefore UNVERIFIED for every node type
+    they cover, which falls out of the existing ledger contract with no special
+    casing.
+    """
+    skills: list[Skill] = []
+    seen: dict[str, str] = {}  # skill name -> source ("bundled" | "external")
+
+    def _load_from(folder: Path, source: str) -> None:
+        for path in sorted(folder.glob("*.yaml")):
+            try:
+                skill = Skill.from_yaml_file(path)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[sql-doctor] Warning: failed to load skill {path.name}: {exc}")
+                continue
+            if skill.name in seen:
+                raise DuplicateSkillNameError(
+                    f"Skill name '{skill.name}' is defined more than once "
+                    f"(existing source: {seen[skill.name]}; conflicting {source} file: "
+                    f"{path}). Skill names must be unique — rename the {source} skill "
+                    f"or remove the file."
+                )
+            skills.append(skill)
+            seen[skill.name] = source
+
+    _load_from(Path(skills_dir), "bundled")
+
+    if external_skills_dir is not None:
+        ext = Path(external_skills_dir)
+        if ext.exists():
+            _load_from(ext, "external")
 
     if ledger_path is not None:
         ledger_status = _apply_ledger(skills, Path(ledger_path))

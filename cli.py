@@ -27,6 +27,7 @@ from core.skill_matcher import (
     DiagnosisResult,
     LedgerStatus,
     SkillMatch,
+    default_external_skills_dir,
     load_skills,
     match_skills,
 )
@@ -177,6 +178,7 @@ def run_analysis(
     schema: str = "public",
     quick: bool = False,
     on_status: Callable[[str], None] | None = None,
+    external_skills_dir: "Path | str | None" = None,
 ) -> AnalysisResult:
     """
     Core analysis pipeline, callable from both the CLI and the GUI.
@@ -199,7 +201,9 @@ def run_analysis(
     plan = parse_explain_json(raw_explain)
 
     _status("\n--- Running deterministic skill checks (no LLM) ---")
-    loaded = load_skills(ledger_path=DEFAULT_LEDGER_PATH)
+    loaded = load_skills(
+        ledger_path=DEFAULT_LEDGER_PATH, external_skills_dir=external_skills_dir
+    )
     table_row_counts = get_table_row_counts(conn, plan.tables_referenced())
 
     # Schema introspection runs unconditionally — required for schema-dependent skill
@@ -288,6 +292,8 @@ def analyze(
         schema=schema,
         quick=quick,
         on_status=_echo,
+        # Runtime path: merge any user-added skills from the external folder.
+        external_skills_dir=default_external_skills_dir(),
     )
 
     typer.echo("\n--- Execution plan summary ---")
@@ -366,8 +372,8 @@ def analyze(
 
 @app.command()
 def list_skills():
-    """Print the loaded deterministic skill library."""
-    loaded = load_skills()
+    """Print the loaded deterministic skill library (bundled + any external)."""
+    loaded = load_skills(external_skills_dir=default_external_skills_dir())
     for s in loaded.skills:
         typer.echo(f"- {s.name} [{s.severity}]: {s.description.strip()}")
 
