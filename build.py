@@ -16,7 +16,8 @@ CLI steps (sql-doctor.exe via PyInstaller):
 GUI steps (sql-doctor-gui.exe via flet pack):
   5. Run flet pack on gui.py with the same skill + ledger data bundled.
      flet pack handles Flet's native renderer assets automatically.
-  6. Smoke-check: dist/sql-doctor-gui.exe --help must exit 0.
+  6. Smoke-check: launch dist/sql-doctor-gui.exe and confirm it starts
+     without crashing (needs a display — a local release step, not CI).
 
 Fails loudly and refuses to produce a release binary if any step fails.
 End users never run this — they receive dist/ binaries directly.
@@ -46,6 +47,27 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     if result.returncode != 0:
         die(f"command exited with code {result.returncode}")
     return result
+
+
+def flet_cli() -> str:
+    """
+    Locate the `flet` console script.
+
+    Flet 0.86 moved the CLI into a separate `flet-cli` package and dropped
+    `python -m flet` (the `flet` package no longer has a `__main__`), so we must
+    invoke the console script directly.
+    """
+    exe = shutil.which("flet")
+    if exe:
+        return exe
+    scripts = Path(sys.executable).parent / ("Scripts" if sys.platform == "win32" else "bin")
+    candidate = scripts / ("flet.exe" if sys.platform == "win32" else "flet")
+    if candidate.exists():
+        return str(candidate)
+    die(
+        "flet CLI not found on PATH or next to the interpreter.\n"
+        "  Install it with: pip install flet-cli"
+    )
 
 
 def build_ledger_prereqs() -> None:
@@ -93,33 +115,53 @@ def build_cli() -> None:
 
 
 def build_gui() -> None:
-    """Steps 5–6: flet pack GUI build + --help smoke check."""
+    """Steps 5–6: flet pack GUI build + startup smoke check."""
     print("Step 5: flet pack GUI build (sql-doctor-gui)")
     # flet pack handles Flet's native renderer and Flutter assets automatically.
     # --add-data bundles the skill YAML library and staged coverage ledger.
     # --hidden-import core.data ensures importlib.resources.files('core.data')
     # resolves correctly in the frozen binary (same requirement as the CLI build).
-    sep = ";" if sys.platform == "win32" else ":"
+    #
+    # Flet 0.86: invoke the `flet` console script (not `python -m flet`), and
+    # --add-data takes `source:destination` (colon) on all platforms — the
+    # flet-cli wrapper translates it to PyInstaller's native separator.
     run([
-        sys.executable, "-m", "flet", "pack", "gui.py",
+        flet_cli(), "pack", "gui.py",
         "--name", "sql-doctor-gui",
-        "--add-data", f"skills{sep}skills",
-        "--add-data", f"core/data/coverage_ledger.json{sep}core/data",
+        "--add-data", "skills:skills",
+        "--add-data", "core/data/coverage_ledger.json:core/data",
         "--hidden-import", "core.data",
+        # -y: non-interactive. flet pack 0.86 otherwise prompts to delete the
+        # existing build/ dir via input(), which crashes with EOFError when run
+        # without a TTY (CI, or this build script).
+        "-y",
     ])
     print()
 
-    print("Step 6: smoke check — --help")
+    print("Step 6: smoke check — launches without crashing")
     if not GUI_EXE.exists():
         die(f"Built binary not found: {GUI_EXE}")
-    result = subprocess.run([str(GUI_EXE), "--help"], capture_output=True, text=True)
-    if result.returncode not in (0, 1):
-        print(f"  stderr: {result.stderr.strip()}", file=sys.stderr)
-        die(
-            f"{GUI_EXE.name} --help exited with code {result.returncode}.\n"
-            "  Do NOT distribute this build."
-        )
-    print(f"  OK — GUI binary exists and responds\n")
+    # A Flet GUI has no --help; running it opens a window and blocks. So we
+    # launch it, and treat "still alive after a few seconds" as success (it
+    # started without crashing), then terminate it. An immediate non-zero exit
+    # means it crashed on startup — a defective build. Note: this briefly opens
+    # a window and therefore needs a display (it is a local release step, not CI).
+    proc = subprocess.Popen([str(GUI_EXE)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        print("  OK — GUI launched and stayed alive (terminated after smoke test)\n")
+    else:
+        if proc.returncode != 0:
+            stderr = (proc.stderr.read() or b"").decode(errors="replace").strip()
+            print(f"  stderr: {stderr}", file=sys.stderr)
+            die(
+                f"{GUI_EXE.name} crashed on startup (exit {proc.returncode}).\n"
+                "  Do NOT distribute this build."
+            )
+        print("  OK — GUI exited cleanly on startup\n")
 
 
 def main() -> None:
