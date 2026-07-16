@@ -10,3 +10,12 @@ venv/
 # Never commit credentials
 .env.local
 config.local.yaml
+
+# PyInstaller build artifacts
+dist/
+build/
+*.spec.bak
+
+# coverage_ledger.json is a build-time copy placed here by build.py;
+# the authoritative copy lives in tests/coverage_ledger.json.
+core/data/coverage_ledger.json

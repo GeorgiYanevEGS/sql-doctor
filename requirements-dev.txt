@@ -1,1 +1,2 @@
 pytest>=7
+pyinstaller>=6.0

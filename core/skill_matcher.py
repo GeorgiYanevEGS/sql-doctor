@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.resources
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -21,17 +22,21 @@ import yaml
 from core.explain_parser import ParsedPlan, PlanNode
 from core.schema_introspect import TableSchema
 
-DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
-
-# Locate the ledger via the package system rather than a raw __file__ path.
-# TODO (future session): promote coverage_ledger.json from tests/ into
-# core/data/ and change this reference to:
-#   importlib.resources.files("core").joinpath("data/coverage_ledger.json")
-# That path is bundled automatically by PyInstaller via package-data datas
-# and resolves correctly in both source and frozen-binary contexts.
-DEFAULT_LEDGER_PATH = (
-    Path(str(importlib.resources.files("core"))).parent / "tests" / "coverage_ledger.json"
-)
+if getattr(sys, "frozen", False):
+    # PyInstaller one-file bundle: sys._MEIPASS is the temp extraction root.
+    # Skills are bundled as ('skills', 'skills') in the .spec datas list.
+    # Ledger is bundled as ('core/data/coverage_ledger.json', 'core/data').
+    _FROZEN_ROOT = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    DEFAULT_SKILLS_DIR = _FROZEN_ROOT / "skills"
+    DEFAULT_LEDGER_PATH = Path(
+        str(importlib.resources.files("core.data").joinpath("coverage_ledger.json"))
+    )
+else:
+    # Source checkout: skills alongside the project root, ledger in tests/.
+    DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+    DEFAULT_LEDGER_PATH = (
+        Path(str(importlib.resources.files("core"))).parent / "tests" / "coverage_ledger.json"
+    )
 
 
 class CoverageStatus(Enum):
