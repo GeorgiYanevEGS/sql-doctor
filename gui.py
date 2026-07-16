@@ -649,22 +649,43 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
 def _build_llm_tab(result) -> ft.Control:
     llm = getattr(result, "llm", None)
 
-    # The fallback only runs when a provider is selected AND no skill matched.
+    # The fallback only runs when a provider is selected AND no skill matched AND
+    # the plan has genuine uncertainty. When it did NOT run, say exactly why —
+    # never a silent blank.
     if llm is None or not getattr(llm, "attempted", False):
+        reason = getattr(llm, "skipped_reason", None) if llm is not None else None
+        n = len(result.matches) if result is not None else 0
+        if reason == "deterministic_findings":
+            detail = (
+                f"No AI call was made — {n} deterministic finding"
+                f"{'s' if n != 1 else ''} already explain this plan. "
+                "The LLM fallback runs only when the deterministic skills don't "
+                "cover the query. See the Findings tab."
+            )
+        elif reason == "fully_cleared":
+            detail = (
+                "No AI call was made — every node was examined and cleared by "
+                "ledger-backed skills (proven clean), so there was nothing for the "
+                "AI to second-guess."
+            )
+        elif reason == "no_provider":
+            detail = (
+                "No AI call was made — the LLM fallback was set to None. Re-run "
+                "with an Ollama / Claude / Azure provider to get an AI hypothesis "
+                "when the deterministic skills don't cover the plan."
+            )
+        else:
+            detail = (
+                "No AI call was made for this query."
+            )
         return ft.Column(
             spacing=8,
             controls=[
-                ft.Text(
-                    "No LLM hypothesis.",
-                    size=16,
-                    weight=ft.FontWeight.BOLD,
-                ),
-                ft.Text(
-                    "The LLM fallback runs only when a provider is selected and no "
-                    "deterministic skill matched. Either a skill covered this query, "
-                    "or the LLM fallback was set to None.",
-                    color=ft.Colors.ON_SURFACE_VARIANT,
-                ),
+                ft.Row(spacing=8, controls=[
+                    ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.ON_SURFACE_VARIANT),
+                    ft.Text("No LLM hypothesis", size=16, weight=ft.FontWeight.BOLD),
+                ]),
+                ft.Text(detail, color=ft.Colors.ON_SURFACE_VARIANT),
             ],
         )
 

@@ -56,6 +56,12 @@ class LLMOutcome:
     validation: ValidationResult | None = None
     error: str | None = None
     attempted: bool = False
+    # When attempted is False, why the fallback did not run. One of:
+    #   "deterministic_findings" — a skill matched; no AI call needed.
+    #   "fully_cleared"          — every node ledger-backed clean; not second-guessed.
+    #   "no_provider"            — llm_provider was "none".
+    # Lets the UI/CLI state the reason explicitly instead of a silent blank.
+    skipped_reason: str | None = None
 
 
 @dataclass
@@ -219,12 +225,19 @@ def run_analysis(
     # deterministic skill fired, AND the plan has genuine uncertainty — at least
     # one NO_APPLICABLE_SKILL or UNVERIFIED node. A fully SKILL_CLEARED plan is a
     # ledger-backed proven-clean result; we do not second-guess it with an LLM.
-    llm = LLMOutcome()
+    # Whenever we skip, record why, so callers can state it explicitly rather
+    # than showing a silent blank.
     has_uncertainty = any(
         s in (CoverageStatus.NO_APPLICABLE_SKILL, CoverageStatus.UNVERIFIED)
         for s in diagnosis.node_type_coverage.values()
     )
-    if llm_provider != "none" and not diagnosis.matches and has_uncertainty:
+    if llm_provider == "none":
+        llm = LLMOutcome(skipped_reason="no_provider")
+    elif diagnosis.matches:
+        llm = LLMOutcome(skipped_reason="deterministic_findings")
+    elif not has_uncertainty:
+        llm = LLMOutcome(skipped_reason="fully_cleared")
+    else:
         _status(f"\n--- Falling back to LLM ({llm_provider}), grounded in real schema ---")
         llm = _invoke_llm_fallback(
             llm_provider, llm_model, llm_host, quick, query, plan, schemas

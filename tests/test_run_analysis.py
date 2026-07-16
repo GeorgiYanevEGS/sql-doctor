@@ -242,6 +242,8 @@ def test_run_analysis_llm_skipped_when_fully_skill_cleared():
         for s in result.node_type_coverage.values()
     ), f"fixture must be fully SKILL_CLEARED, got {result.node_type_coverage}"
     assert result.llm.attempted is False
+    # Skip reason must be explicit so the UI never shows a silent blank.
+    assert result.llm.skipped_reason == "fully_cleared"
     gp.assert_not_called()
 
 
@@ -258,6 +260,7 @@ def test_run_analysis_llm_skipped_when_skill_matches():
 
     assert result.matches, "missing_index should have fired"
     assert result.llm.attempted is False
+    assert result.llm.skipped_reason == "deterministic_findings"
     gp.assert_not_called()
 
 
@@ -273,6 +276,7 @@ def test_run_analysis_llm_provider_none_never_attempts():
         )
 
     assert result.llm.attempted is False
+    assert result.llm.skipped_reason == "no_provider"
     gp.assert_not_called()
 
 
