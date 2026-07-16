@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -72,14 +73,14 @@ class AppState:
 # ---------------------------------------------------------------------------
 
 def _dashboard_view(page: ft.Page, state: AppState) -> ft.View:
-    status_color = ft.colors.GREEN if state.connection_ok else ft.colors.GREY_400
+    status_color = ft.Colors.GREEN if state.connection_ok else ft.Colors.GREY_400
     status_label = "Connected" if state.connection_ok else "Not connected"
-    status_icon = ft.icons.CIRCLE if state.connection_ok else ft.icons.CIRCLE_OUTLINED
+    status_icon = ft.Icons.CIRCLE if state.connection_ok else ft.Icons.RADIO_BUTTON_UNCHECKED
 
     return ft.View(
         route="/",
         controls=[
-            ft.AppBar(title=ft.Text("sql-doctor"), bgcolor=ft.colors.SURFACE_VARIANT),
+            ft.AppBar(title=ft.Text("sql-doctor"), bgcolor=ft.Colors.SURFACE_CONTAINER),
             ft.Container(
                 padding=40,
                 content=ft.Column(
@@ -89,7 +90,7 @@ def _dashboard_view(page: ft.Page, state: AppState) -> ft.View:
                         ft.Text(
                             "Diagnose slow PostgreSQL queries with deterministic skill checks.",
                             size=16,
-                            color=ft.colors.ON_SURFACE_VARIANT,
+                            color=ft.Colors.ON_SURFACE_VARIANT,
                         ),
                         ft.Row(
                             spacing=8,
@@ -103,13 +104,13 @@ def _dashboard_view(page: ft.Page, state: AppState) -> ft.View:
                             controls=[
                                 ft.ElevatedButton(
                                     "New Analysis",
-                                    icon=ft.icons.SEARCH,
-                                    on_click=lambda _: page.go("/connect"),
+                                    icon=ft.Icons.SEARCH,
+                                    on_click=lambda _: page.navigate("/connect"),
                                 ),
                                 ft.OutlinedButton(
                                     "Connection Settings",
-                                    icon=ft.icons.SETTINGS,
-                                    on_click=lambda _: page.go("/connect"),
+                                    icon=ft.Icons.SETTINGS,
+                                    on_click=lambda _: page.navigate("/connect"),
                                 ),
                             ],
                         ),
@@ -134,7 +135,7 @@ def _connect_view(page: ft.Page, state: AppState) -> ft.View:
     )
     dbname_field = ft.TextField(label="Database", value=cfg.dbname, expand=True)
     schema_field = ft.TextField(label="Schema", value=cfg.schema, width=160)
-    status_text = ft.Text("", color=ft.colors.ON_SURFACE_VARIANT)
+    status_text = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT)
 
     def _dsn() -> str:
         return (
@@ -155,7 +156,7 @@ def _connect_view(page: ft.Page, state: AppState) -> ft.View:
 
     def on_test(_) -> None:
         status_text.value = "Testing connection..."
-        status_text.color = ft.colors.ON_SURFACE_VARIANT
+        status_text.color = ft.Colors.ON_SURFACE_VARIANT
         page.update()
 
         def _test():
@@ -165,26 +166,26 @@ def _connect_view(page: ft.Page, state: AppState) -> ft.View:
                 conn.close()
                 state.connection_ok = True
                 status_text.value = "Connection successful."
-                status_text.color = ft.colors.GREEN
+                status_text.color = ft.Colors.GREEN
             except Exception as exc:
                 state.connection_ok = False
                 status_text.value = f"Connection failed: {exc}"
-                status_text.color = ft.colors.RED
+                status_text.color = ft.Colors.RED
             page.update()
 
         threading.Thread(target=_test, daemon=True).start()
 
     def on_continue(_) -> None:
         _save_fields()
-        page.go("/analyze")
+        page.navigate("/analyze")
 
     return ft.View(
         route="/connect",
         controls=[
             ft.AppBar(
                 title=ft.Text("Connection Settings"),
-                bgcolor=ft.colors.SURFACE_VARIANT,
-                leading=ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: page.go("/")),
+                bgcolor=ft.Colors.SURFACE_CONTAINER,
+                leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: page.navigate("/")),
             ),
             ft.Container(
                 padding=40,
@@ -233,8 +234,8 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
         ],
     )
     spinner = ft.ProgressRing(width=20, height=20, visible=False)
-    status_text = ft.Text("", color=ft.colors.ON_SURFACE_VARIANT)
-    analyze_btn = ft.ElevatedButton("Analyze", icon=ft.icons.PLAY_ARROW)
+    status_text = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT)
+    analyze_btn = ft.ElevatedButton("Analyze", icon=ft.Icons.PLAY_ARROW)
 
     def on_analyze(_) -> None:
         state.last_query = query_field.value
@@ -251,11 +252,7 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
         def _run():
             from cli import run_analysis
 
-            statuses: list[str] = []
-
             def _on_status(msg: str) -> None:
-                statuses.append(msg.strip())
-                # Show last meaningful line only (skip blank/separator lines).
                 display = msg.strip().lstrip("-").strip()
                 if display:
                     status_text.value = display
@@ -279,7 +276,7 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
                 spinner.visible = False
                 status_text.value = f"Done — {len(result.matches)} finding(s)."
                 page.update()
-                page.go("/results")
+                page.navigate("/results")
             except Exception as exc:
                 analyze_btn.disabled = False
                 spinner.visible = False
@@ -295,8 +292,8 @@ def _analyze_view(page: ft.Page, state: AppState) -> ft.View:
         controls=[
             ft.AppBar(
                 title=ft.Text("Analyze Query"),
-                bgcolor=ft.colors.SURFACE_VARIANT,
-                leading=ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: page.go("/")),
+                bgcolor=ft.Colors.SURFACE_CONTAINER,
+                leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: page.navigate("/")),
             ),
             ft.Container(
                 padding=40,
@@ -344,28 +341,9 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
         ],
     )
 
-    export_status = ft.Text("", color=ft.colors.ON_SURFACE_VARIANT, size=12)
+    export_status = ft.Text("", color=ft.Colors.ON_SURFACE_VARIANT, size=12)
 
-    def _on_save_result(e: ft.FilePickerResultEvent) -> None:
-        if not e.path:
-            return  # user cancelled
-        try:
-            cfg = state.config
-            html = generate_html_report(
-                result,
-                query=state.last_query,
-                host=cfg.host,
-                dbname=cfg.dbname,
-            )
-            Path(e.path).write_text(html, encoding="utf-8")
-            export_status.value = f"Saved: {e.path}"
-            export_status.color = ft.colors.GREEN
-        except Exception as exc:
-            export_status.value = f"Export failed: {exc}"
-            export_status.color = ft.colors.RED
-        page.update()
-
-    file_picker = ft.FilePicker(on_result=_on_save_result)
+    file_picker = ft.FilePicker()
     page.overlay.append(file_picker)
 
     default_name = (
@@ -374,29 +352,46 @@ def _results_view(page: ft.Page, state: AppState) -> ft.View:
         + ".html"
     )
 
-    def on_export(_) -> None:
-        file_picker.save_file(
+    async def on_export(_) -> None:
+        path = await file_picker.save_file(
             dialog_title="Save sql-doctor report",
             file_name=default_name,
             allowed_extensions=["html"],
         )
+        if path is None:
+            return  # user cancelled
+        try:
+            cfg = state.config
+            html_content = generate_html_report(
+                result,
+                query=state.last_query,
+                host=cfg.host,
+                dbname=cfg.dbname,
+            )
+            Path(path).write_text(html_content, encoding="utf-8")
+            export_status.value = f"Saved: {path}"
+            export_status.color = ft.Colors.GREEN
+        except Exception as exc:
+            export_status.value = f"Export failed: {exc}"
+            export_status.color = ft.Colors.RED
+        page.update()
 
     return ft.View(
         route="/results",
         controls=[
             ft.AppBar(
                 title=ft.Text("Results"),
-                bgcolor=ft.colors.SURFACE_VARIANT,
+                bgcolor=ft.Colors.SURFACE_CONTAINER,
                 leading=ft.IconButton(
-                    ft.icons.ARROW_BACK, on_click=lambda _: page.go("/analyze")
+                    ft.Icons.ARROW_BACK, on_click=lambda _: page.navigate("/analyze")
                 ),
                 actions=[
                     ft.TextButton(
                         "Export Report",
-                        icon=ft.icons.DOWNLOAD,
+                        icon=ft.Icons.DOWNLOAD,
                         on_click=on_export,
                     ),
-                    ft.TextButton("New Analysis", on_click=lambda _: page.go("/analyze")),
+                    ft.TextButton("New Analysis", on_click=lambda _: page.navigate("/analyze")),
                 ],
             ),
             ft.Container(expand=True, content=tabs),
@@ -436,7 +431,7 @@ def _render_plan_node(node, depth: int, flagged_ids: set) -> ft.Control:
     )
     label = "  ".join(label_parts)
 
-    text_color = ft.colors.RED_400 if is_flagged else ft.colors.ON_SURFACE
+    text_color = ft.Colors.RED_400 if is_flagged else ft.Colors.ON_SURFACE
     weight = ft.FontWeight.BOLD if is_flagged else ft.FontWeight.NORMAL
     prefix = "⚠ " if is_flagged else "· "
 
@@ -458,18 +453,18 @@ def _render_plan_node(node, depth: int, flagged_ids: set) -> ft.Control:
 
 def _build_plan_tree_tab(result) -> ft.Control:
     if result is None or result.plan is None:
-        return ft.Text("No plan available.", color=ft.colors.ON_SURFACE_VARIANT)
+        return ft.Text("No plan available.", color=ft.Colors.ON_SURFACE_VARIANT)
 
     flagged_ids = {id(m.matched_node) for m in result.matches if m.matched_node is not None}
 
     legend_controls = []
     if flagged_ids:
         legend_controls.append(ft.Row(spacing=4, controls=[
-            ft.Text("⚠", color=ft.colors.RED_400),
+            ft.Text("⚠", color=ft.Colors.RED_400),
             ft.Text("Skill flagged this node", size=12),
         ]))
     legend_controls.append(ft.Row(spacing=4, controls=[
-        ft.Text("·", color=ft.colors.ON_SURFACE),
+        ft.Text("·", color=ft.Colors.ON_SURFACE),
         ft.Text("Clean", size=12),
     ]))
     legend = ft.Row(spacing=16, controls=legend_controls)
@@ -485,7 +480,7 @@ def _build_plan_tree_tab(result) -> ft.Control:
 
 
 # ---------------------------------------------------------------------------
-# Findings tab (Steps 4-5 — detail panel wired here)
+# Findings tab (detail panel wired here)
 # ---------------------------------------------------------------------------
 
 def _build_findings_tab(page: ft.Page, result) -> ft.Control:
@@ -493,25 +488,25 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
         return ft.Column(
             spacing=8,
             controls=[
-                ft.Icon(ft.icons.CHECK_CIRCLE_OUTLINE, color=ft.colors.GREEN, size=48),
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=ft.Colors.GREEN, size=48),
                 ft.Text(
                     "No issues found — all node types examined and cleared.",
                     size=16,
-                    color=ft.colors.ON_SURFACE_VARIANT,
+                    color=ft.Colors.ON_SURFACE_VARIANT,
                 ),
             ],
         )
 
     _SEVERITY_COLOR = {
-        "high": ft.colors.RED_400,
-        "medium": ft.colors.ORANGE_400,
-        "low": ft.colors.BLUE_400,
+        "high": ft.Colors.RED_400,
+        "medium": ft.Colors.ORANGE_400,
+        "low": ft.Colors.BLUE_400,
     }
 
     detail_panel = ft.Container(
         visible=False,
         padding=16,
-        bgcolor=ft.colors.SURFACE_VARIANT,
+        bgcolor=ft.Colors.SURFACE_CONTAINER,
         border_radius=8,
         content=ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[]),
     )
@@ -520,8 +515,8 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
         detail_panel.content.controls = [
             ft.Row([
                 ft.Container(
-                    content=ft.Text(match.severity.upper(), size=11, weight=ft.FontWeight.BOLD, color=ft.colors.WHITE),
-                    bgcolor=_SEVERITY_COLOR.get(match.severity, ft.colors.GREY),
+                    content=ft.Text(match.severity.upper(), size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                    bgcolor=_SEVERITY_COLOR.get(match.severity, ft.Colors.GREY),
                     padding=ft.padding.symmetric(horizontal=8, vertical=2),
                     border_radius=4,
                 ),
@@ -543,14 +538,14 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
 
     rows = []
     for match in result.matches:
-        sev_color = _SEVERITY_COLOR.get(match.severity, ft.colors.GREY)
+        sev_color = _SEVERITY_COLOR.get(match.severity, ft.Colors.GREY)
         row = ft.ListTile(
             leading=ft.Container(
                 content=ft.Text(
                     match.severity.upper(),
                     size=10,
                     weight=ft.FontWeight.BOLD,
-                    color=ft.colors.WHITE,
+                    color=ft.Colors.WHITE,
                 ),
                 bgcolor=sev_color,
                 padding=ft.padding.symmetric(horizontal=6, vertical=2),
@@ -568,7 +563,7 @@ def _build_findings_tab(page: ft.Page, result) -> ft.Control:
             ft.Text(
                 f"{len(result.matches)} finding(s) — click a row for details",
                 size=12,
-                color=ft.colors.ON_SURFACE_VARIANT,
+                color=ft.Colors.ON_SURFACE_VARIANT,
             ),
             ft.Divider(),
             *rows,
@@ -602,20 +597,28 @@ def main(page: ft.Page) -> None:
     def route_change(e: ft.RouteChangeEvent) -> None:
         route = e.route
         builder = _VIEW_BUILDERS.get(route, _dashboard_view)
+        try:
+            view = builder(page, state)
+        except Exception:
+            traceback.print_exc()
+            view = ft.View(
+                route=route,
+                controls=[ft.Text(f"Error loading {route} — see console", color=ft.Colors.RED)],
+            )
         page.views.clear()
-        page.views.append(builder(page, state))
+        page.views.append(view)
         page.update()
 
     def view_pop(_) -> None:
         page.views.pop()
         top = page.views[-1] if page.views else None
         if top:
-            page.go(top.route)
+            page.navigate(top.route)
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
-    page.go("/")
+    page.navigate("/")
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)
