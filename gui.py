@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import traceback
 from dataclasses import asdict, dataclass, field
@@ -805,5 +806,44 @@ async def main(page: ft.Page) -> None:
     render_route(page.route or "/")
 
 
+def _self_check() -> int:
+    """
+    Verify the bundled skill library and coverage ledger resolve at runtime.
+
+    build.py runs this as a post-build integrity check on the frozen binary.
+    It exercises the exact importlib.resources path resolution that
+    run_analysis() relies on (DEFAULT_LEDGER_PATH + DEFAULT_SKILLS_DIR), without
+    opening a window or needing a database, and signals the result via exit
+    code — because a --noconsole packed exe may have no usable stdout.
+
+    Exit 0 = both the skills/ library and the coverage ledger were found inside
+    the bundle and the ledger loaded cleanly; non-zero = defective build.
+    """
+    try:
+        from core.skill_matcher import DEFAULT_LEDGER_PATH, LedgerStatus, load_skills
+
+        loaded = load_skills(ledger_path=DEFAULT_LEDGER_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"SELF-CHECK FAILED: could not load bundled skills/ledger: {exc}")
+        return 1
+
+    if not loaded.skills:
+        print("SELF-CHECK FAILED: no skills found in the bundle (skills/ not packaged?)")
+        return 1
+    if loaded.ledger_status != LedgerStatus.OK:
+        print(
+            f"SELF-CHECK FAILED: coverage ledger status {loaded.ledger_status.name} "
+            "(expected OK) — the bundled ledger is missing or corrupt"
+        )
+        return 1
+
+    print(f"SELF-CHECK OK: {len(loaded.skills)} skills loaded, coverage ledger OK")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--self-check" in sys.argv:
+        # Post-build integrity check (see build.py Step 6). Must run BEFORE
+        # ft.run(), which would otherwise open a blocking window.
+        raise SystemExit(_self_check())
     ft.run(main)

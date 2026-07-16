@@ -16,8 +16,9 @@ CLI steps (sql-doctor.exe via PyInstaller):
 GUI steps (sql-doctor-gui.exe via flet pack):
   5. Run flet pack on gui.py with the same skill + ledger data bundled.
      flet pack handles Flet's native renderer assets automatically.
-  6. Smoke-check: launch dist/sql-doctor-gui.exe and confirm it starts
-     without crashing (needs a display — a local release step, not CI).
+  6. Smoke-check: run dist/sql-doctor-gui.exe --self-check, which loads the
+     bundled skills + coverage ledger via importlib.resources and exits 0 only
+     if both resolve inside the frozen binary (no window, no display needed).
 
 Fails loudly and refuses to produce a release binary if any step fails.
 End users never run this — they receive dist/ binaries directly.
@@ -138,30 +139,30 @@ def build_gui() -> None:
     ])
     print()
 
-    print("Step 6: smoke check — launches without crashing")
+    print("Step 6: smoke check — bundled skills + coverage ledger resolve")
     if not GUI_EXE.exists():
         die(f"Built binary not found: {GUI_EXE}")
-    # A Flet GUI has no --help; running it opens a window and blocks. So we
-    # launch it, and treat "still alive after a few seconds" as success (it
-    # started without crashing), then terminate it. An immediate non-zero exit
-    # means it crashed on startup — a defective build. Note: this briefly opens
-    # a window and therefore needs a display (it is a local release step, not CI).
-    proc = subprocess.Popen([str(GUI_EXE)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        proc.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        print("  OK — GUI launched and stayed alive (terminated after smoke test)\n")
-    else:
-        if proc.returncode != 0:
-            stderr = (proc.stderr.read() or b"").decode(errors="replace").strip()
-            print(f"  stderr: {stderr}", file=sys.stderr)
-            die(
-                f"{GUI_EXE.name} crashed on startup (exit {proc.returncode}).\n"
-                "  Do NOT distribute this build."
-            )
-        print("  OK — GUI exited cleanly on startup\n")
+    # A Flet GUI has no --help and opens a blocking window, so it can't be
+    # smoke-tested that way. Instead the binary supports a hidden --self-check
+    # that loads the bundled skills/ and coverage ledger through
+    # importlib.resources — the exact path resolution run_analysis() relies on —
+    # and signals via exit code. This actually exercises the bundled data files
+    # (proving they were packaged and resolve inside the frozen binary), needs no
+    # display, and is deterministic. stdout may be empty for a --noconsole exe,
+    # so the exit code is authoritative.
+    result = subprocess.run([str(GUI_EXE), "--self-check"], capture_output=True, text=True)
+    if result.stdout.strip():
+        print(f"  {result.stdout.strip()}")
+    if result.returncode != 0:
+        if result.stderr.strip():
+            print(f"  stderr: {result.stderr.strip()}", file=sys.stderr)
+        die(
+            f"{GUI_EXE.name} --self-check exited with code {result.returncode} "
+            "(expected 0).\n"
+            "  The GUI binary was built, but its bundled skills/ledger are missing\n"
+            "  or corrupt inside the frozen binary. Do NOT distribute this build."
+        )
+    print("  OK — bundled skills + coverage ledger resolved inside the frozen binary\n")
 
 
 def main() -> None:
